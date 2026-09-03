@@ -55,6 +55,10 @@ class PingMonitorApp:
     # Change this value to probe more or less frequently.
     PING_INTERVAL_SECONDS = 1.0
 
+    # Default number of most-recent pings shown in the Real-Time Latency
+    # History graph per host (i.e. the graph's rolling window length).
+    GRAPH_HISTORY_POINTS = 60
+
     def __init__(self, root):
         self.root = root
         self.root.title("Multi-Host Graphical Ping Monitor")
@@ -75,6 +79,7 @@ class PingMonitorApp:
         # needs to change them per-session without touching the class defaults.
         self.packet_size_bytes = PingMonitorApp.PACKET_SIZE_BYTES
         self.ping_interval_seconds = PingMonitorApp.PING_INTERVAL_SECONDS
+        self.graph_history_points = PingMonitorApp.GRAPH_HISTORY_POINTS
 
         self.setup_ui()
 
@@ -87,21 +92,43 @@ class PingMonitorApp:
         control_frame = ttk.LabelFrame(self.root, text=" Network Configuration ", padding=10)
         control_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(control_frame, text="Enter Hosts (comma-separated):").pack(side="left", padx=5)
-        self.host_entry = ttk.Entry(control_frame, width=50)
+        row1 = ttk.Frame(control_frame)
+        row1.pack(fill="x")
+
+        ttk.Label(row1, text="Enter Hosts (comma-separated):").pack(side="left", padx=5)
+        self.host_entry = ttk.Entry(row1, width=50)
         self.host_entry.pack(side="left", padx=5, fill="x", expand=True)
         self.host_entry.insert(0, "8.8.8.8, 1.1.1.1, google.com")
 
-        self.start_btn = ttk.Button(control_frame, text="Start Monitor", command=self.toggle_monitoring)
+        self.start_btn = ttk.Button(row1, text="Start Monitor", command=self.toggle_monitoring)
         self.start_btn.pack(side="left", padx=5)
 
-        self.export_btn = ttk.Button(control_frame, text="Export Report (.txt)",
+        self.export_btn = ttk.Button(row1, text="Export Report (.txt)",
                                       command=self.export_report_summary, state="disabled")
         self.export_btn.pack(side="left", padx=5)
 
-        self.export_csv_btn = ttk.Button(control_frame, text="Export Report (.csv)",
+        self.export_csv_btn = ttk.Button(row1, text="Export Report (.csv)",
                                           command=self.export_report_csv, state="disabled")
         self.export_csv_btn.pack(side="left", padx=5)
+
+        # --- 第二行：可调节的参数（包大小 / 间隔 / 图表历史长度）---
+        settings_frame = ttk.Frame(control_frame)
+        settings_frame.pack(fill="x", pady=(6, 0))
+
+        ttk.Label(settings_frame, text="Packet Size (bytes):").pack(side="left", padx=(5, 3))
+        self.packet_size_entry = ttk.Entry(settings_frame, width=6)
+        self.packet_size_entry.pack(side="left", padx=(0, 15))
+        self.packet_size_entry.insert(0, str(PingMonitorApp.PACKET_SIZE_BYTES))
+
+        ttk.Label(settings_frame, text="Ping Interval (s):").pack(side="left", padx=(0, 3))
+        self.interval_entry = ttk.Entry(settings_frame, width=6)
+        self.interval_entry.pack(side="left", padx=(0, 15))
+        self.interval_entry.insert(0, str(PingMonitorApp.PING_INTERVAL_SECONDS))
+
+        ttk.Label(settings_frame, text="Graph History (pings):").pack(side="left", padx=(0, 3))
+        self.history_entry = ttk.Entry(settings_frame, width=6)
+        self.history_entry.pack(side="left")
+        self.history_entry.insert(0, str(PingMonitorApp.GRAPH_HISTORY_POINTS))
 
         # --- 中部：可拖拽调整大小的三个区域（表格 / 图表 / down hosts）---
         paned = ttk.PanedWindow(self.root, orient="vertical")
@@ -186,23 +213,61 @@ class PingMonitorApp:
                 messagebox.showerror("Error", "Please input at least one valid host.")
                 return
 
-            # Raw ICMP sockets require Administrator (Windows) or root/sudo
-            # (macOS/Linux) privileges. Check up front so we fail with a clear
-            # message instead of every worker thread silently timing out.
+            # Read and validate the adjustable settings before anything starts.
+            try:
+                packet_size = int(self.packet_size_entry.get().strip())
+                if packet_size < 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Error", "Packet Size must be a whole number of bytes (0 or more).")
+                return
+
+            try:
+                interval = float(self.interval_entry.get().strip())
+                if interval <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Error", "Ping Interval must be a number of seconds greater than 0.")
+                return
+
+            try:
+                history_points = int(self.history_entry.get().strip())
+                if history_points < 1:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Error", "Graph History must be a whole number of 1 or more.")
+                return
+
+            self.packet_size_bytes = packet_size
+            self.ping_interval_seconds = interval
+            self.graph_history_points = history_points
+
+            # Uses Linux's non-privileged "ping socket" (SOCK_DGRAM + IPPROTO_ICMP),
+            # which works without root/admin as long as the current user's group is
+            # within the net.ipv4.ping_group_range sysctl (open by default on most
+            # distros). Check up front so we fail with a clear message instead of
+            # every worker thread silently timing out.
             if not self._has_icmp_permissions():
                 messagebox.showerror(
-                    "Administrator / Root Required",
-                    "Real ICMP ping needs elevated privileges to open a raw socket.\n\n"
-                    "Windows: right-click your terminal/IDE and choose 'Run as administrator', "
-                    "then run the script again.\n\n"
-                    "macOS / Linux: run it with sudo, e.g.:\n"
-                    "    sudo python3 ping_monitor.py"
+                    "ICMP Ping Socket Unavailable",
+                    "Couldn't open a non-privileged ICMP ping socket "
+                    "(socket.SOCK_DGRAM + IPPROTO_ICMP).\n\n"
+                    "This feature is Linux-only and requires net.ipv4.ping_group_range "
+                    "to include your user's group. On most distros this is open by "
+                    "default; if it's restricted, enable it with:\n\n"
+                    "    sudo sysctl -w net.ipv4.ping_group_range=\"0 2147483647\"\n\n"
+                    "(To make it permanent, add that line to /etc/sysctl.conf.)\n\n"
+                    "On Windows/macOS this socket type isn't available — use the raw "
+                    "ICMP or TCP-connect version instead."
                 )
                 return
 
             self.is_monitoring = True
             self.start_btn.config(text="Stop Monitor")
             self.host_entry.config(state="disabled")
+            self.packet_size_entry.config(state="disabled")
+            self.interval_entry.config(state="disabled")
+            self.history_entry.config(state="disabled")
             self.export_btn.config(state="disabled")
             self.export_csv_btn.config(state="disabled")
 
@@ -218,7 +283,7 @@ class PingMonitorApp:
             self.ax.clear()
 
             # 初始化数据池
-            for idx, host in enumerate(self.hosts):
+            for host in self.hosts:
                 self.host_data[host] = {
                     'latencies': [],
                     'sent': 0,
@@ -229,10 +294,6 @@ class PingMonitorApp:
                     'last_status': None,
                     'consecutive_fails': 0,
                     'last_down_time': "-",
-                    # Unique 16-bit ICMP identifier per host so replies can be
-                    # matched to the host that sent the request even if
-                    # several hosts are being pinged at once.
-                    'icmp_id': (os.getpid() + idx) & 0xffff,
                 }
 
             # 并发启动多线程
@@ -248,6 +309,9 @@ class PingMonitorApp:
             self.is_monitoring = False
             self.start_btn.config(text="Start Monitor")
             self.host_entry.config(state="normal")
+            self.packet_size_entry.config(state="normal")
+            self.interval_entry.config(state="normal")
+            self.history_entry.config(state="normal")
             self.threads.clear()
 
             if self.host_data:
@@ -259,9 +323,9 @@ class PingMonitorApp:
                 self.export_report_summary()
 
     def _has_icmp_permissions(self):
-        """Best-effort check that we can actually open a raw ICMP socket."""
+        """Best-effort check that we can open a non-privileged Linux ping socket."""
         try:
-            test_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+            test_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
             test_sock.close()
             return True
         except (PermissionError, OSError):
@@ -275,7 +339,13 @@ class PingMonitorApp:
 
     def ping_worker(self, host):
         local_seq = 0
-        icmp_id = self.host_data[host]['icmp_id']
+        # Ask the kernel to hand back the reply's TTL as ancillary data, since
+        # non-privileged ping sockets (unlike raw sockets) don't include the
+        # IP header in the received bytes — this is exactly what /bin/ping
+        # itself does under the hood.
+        ip_recvttl = getattr(socket, "IP_RECVTTL", 12)
+        ip_ttl_cmsg_type = getattr(socket, "IP_TTL", 2)
+        cmsg_bufsize = socket.CMSG_SPACE(struct.calcsize("i"))
 
         while self.is_monitoring:
             local_seq += 1
@@ -283,19 +353,28 @@ class PingMonitorApp:
             self.host_data[host]['sent'] += 1
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
-            packet = _build_icmp_echo_packet(icmp_id, seq, self.packet_size_bytes)
-
             status = "Timed Out"
             ttl_val = "-"
             latency = 0
 
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
                 sock.settimeout(1.0)
-                # connect() on a raw socket restricts recv() to packets coming
-                # from this peer only, so concurrent pings to other hosts
-                # don't cross-talk on this socket.
+                sock.setsockopt(socket.IPPROTO_IP, ip_recvttl, 1)
+                # connect() restricts recv() to packets coming from this peer
+                # only, so concurrent pings to other hosts don't cross-talk.
+                # The port value itself is ignored for ICMP.
                 sock.connect((host, 1))
+
+                # IMPORTANT: for Linux ping sockets, the kernel overwrites the
+                # ICMP identifier field with the socket's own local port before
+                # transmitting — whatever id we put in the packet ourselves is
+                # ignored on the wire. So we must read back the port the kernel
+                # actually assigned (via the connect() above) and use THAT as
+                # the id we expect replies to match, otherwise every reply
+                # looks like a mismatch and every ping falsely times out.
+                icmp_id = sock.getsockname()[1] & 0xffff
+                packet = _build_icmp_echo_packet(icmp_id, seq, self.packet_size_bytes)
 
                 start_time = time.time()
                 sock.send(packet)
@@ -304,20 +383,26 @@ class PingMonitorApp:
                 # a real error reply, or the socket times out. This guards
                 # against stray/late ICMP packets being mistaken for ours.
                 while True:
-                    reply = sock.recv(1024)
+                    data, ancdata, _flags, _addr = sock.recvmsg(1024, cmsg_bufsize)
                     end_time = time.time()
 
-                    if len(reply) < 28:
-                        continue  # too short to hold an IP header + ICMP header
+                    if len(data) < 8:
+                        continue  # too short to hold an ICMP header
 
-                    ttl = reply[8]  # TTL is byte offset 8 in the IPv4 header
-                    icmp_type, icmp_code, _chk, r_id, r_seq = struct.unpack("!BBHHH", reply[20:28])
+                    # Ping sockets deliver the ICMP header directly, with no
+                    # leading IP header (unlike raw sockets).
+                    icmp_type, icmp_code, _chk, r_id, r_seq = struct.unpack("!BBHHH", data[:8])
+
+                    ttl = None
+                    for cmsg_level, cmsg_type, cmsg_data in ancdata:
+                        if cmsg_level == socket.IPPROTO_IP and cmsg_type == ip_ttl_cmsg_type:
+                            ttl = struct.unpack("@i", cmsg_data[:4])[0]
 
                     if icmp_type == 0 and r_id == icmp_id and r_seq == seq:
                         # Echo Reply matching our request
                         latency = round((end_time - start_time) * 1000, 2)
                         status = "Connected"
-                        ttl_val = str(ttl)
+                        ttl_val = str(ttl) if ttl is not None else "N/A"
                         break
 
                     if icmp_type in (3, 11) and r_id == icmp_id:
@@ -564,13 +649,13 @@ class PingMonitorApp:
 
         self.ax.clear()
         self.ax.set_title("Live Latency Trends (ms)")
-        self.ax.set_xlabel("Pings (Last 30 packets)")
+        self.ax.set_xlabel(f"Pings (Last {self.graph_history_points} packets)")
         self.ax.set_ylabel("Latency (ms)")
         self.ax.grid(True, linestyle="--", alpha=0.5)
 
         has_data = False
         for host, data in self.host_data.items():
-            y_data = data['latencies'][-30:]
+            y_data = data['latencies'][-self.graph_history_points:]
             x_data = list(range(len(y_data)))
             if y_data:
                 has_data = True
