@@ -3,5 +3,6 @@
   "packet_size": 56,
   "interval": 1.0,
   "timeout": 1.0,
-  "history_points": 60
+  "history_points": 60,
+  "dark_theme": false
 }
