@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QLineEdit, QDialog, QTextEdit,
     QPushButton, QSpinBox, QDoubleSpinBox, QFrame, QMessageBox,
 )
-from probes import ProbeResult, ProbeTask, normalize_targets
+from probes import MAX_CONCURRENT_PROBES, ProbeResult, ProbeTask, normalize_targets
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -71,12 +71,12 @@ class HostDetailDialog(QDialog):
         stats_layout.setSpacing(12)
         sent = self.data.get("sent", 0)
         received = self.data.get("received", 0)
-        loss_pct = round(((sent - received) / sent) * 100, 1) if sent > 0 else 0.0
+        loss_pct = round(((sent - received) / sent) * 100, 1) if sent > 0 else None
         valid_latencies = [l for l in self.data.get("latencies", []) if l > 0]
         stats = [
             ("Packets Sent", sent),
             ("Packets Received", received),
-            ("Packet Loss", f"{loss_pct}%"),
+            ("Packet Loss", f"{loss_pct}%" if loss_pct is not None else "n/a"),
             ("Recent Samples", len(valid_latencies)),
         ]
         if valid_latencies:
@@ -361,7 +361,7 @@ class PingMonitorApp(QMainWindow):
     PACKET_SIZE_BYTES = 56
     PING_INTERVAL_SECONDS = 1.0
     GRAPH_HISTORY_POINTS = 60
-    TIMEOUT_SECONDS = 1.0
+    TIMEOUT_SECONDS = 2.0
     MAX_LOG_ENTRIES = 1000
     CONFIG_FILE = Path(__file__).resolve().with_name("ping_monitor_config.json")
 
@@ -383,6 +383,7 @@ class PingMonitorApp(QMainWindow):
         self.ping_interval_seconds = self.PING_INTERVAL_SECONDS
         self.graph_history_points = self.GRAPH_HISTORY_POINTS
         self.timeout_seconds = self.TIMEOUT_SECONDS
+        self.max_concurrent_probes = MAX_CONCURRENT_PROBES
 
         self.setWindowTitle("Ping Check — Professional Network Monitor")
         screen = QApplication.primaryScreen()
@@ -456,7 +457,7 @@ class PingMonitorApp(QMainWindow):
         config_layout.setSpacing(10)
 
         section = QLabel("TARGET CONFIGURATION")
-        section.setObjectName("sectionCaption")
+        section.setObjectName("targetConfigurationCaption")
         config_layout.addWidget(section)
 
         host_row = QHBoxLayout()
@@ -519,7 +520,7 @@ class PingMonitorApp(QMainWindow):
         self.timeout_spin.setRange(0.1, 10.0)
         self.timeout_spin.setDecimals(1)
         self.timeout_spin.setSingleStep(0.1)
-        self.timeout_spin.setValue(1.0)
+        self.timeout_spin.setValue(2.0)
         self.timeout_spin.setSuffix(" s")
         self.timeout_spin.setMinimumWidth(110)
         timeout_col.addWidget(self.timeout_spin)
@@ -537,6 +538,31 @@ class PingMonitorApp(QMainWindow):
         self.history_spin.setMinimumWidth(120)
         hist_col.addWidget(self.history_spin)
         settings_row.addLayout(hist_col)
+
+        concurrency_col = QVBoxLayout()
+        concurrency_col.setSpacing(3)
+        concurrency_caption_row = QHBoxLayout()
+        concurrency_caption_row.setSpacing(6)
+        concurrency_lbl = QLabel("MAX PARALLEL")
+        concurrency_lbl.setObjectName("sectionCaption")
+        max_concurrency_note = QLabel(f"Max: {MAX_CONCURRENT_PROBES}")
+        max_concurrency_note.setObjectName("captionLabel")
+        concurrency_caption_row.addWidget(concurrency_lbl)
+        concurrency_caption_row.addWidget(max_concurrency_note)
+        concurrency_caption_row.addStretch()
+        concurrency_col.addLayout(concurrency_caption_row)
+        self.concurrency_spin = QSpinBox()
+        self.concurrency_spin.setRange(1, MAX_CONCURRENT_PROBES)
+        self.concurrency_spin.setValue(MAX_CONCURRENT_PROBES)
+        self.concurrency_spin.setSuffix(" hosts")
+        self.concurrency_spin.setMinimumWidth(120)
+        self.concurrency_spin.setToolTip(
+            f"Maximum number of simultaneous ICMP/DNS probes (application limit: {MAX_CONCURRENT_PROBES}). "
+            "Linux uses fping's paced multi-host loop when available, so this setting applies to the fallback backend there. "
+            "Your system or network may require a lower value."
+        )
+        concurrency_col.addWidget(self.concurrency_spin)
+        settings_row.addLayout(concurrency_col)
 
         settings_row.addStretch()
         config_layout.addLayout(settings_row)
@@ -568,6 +594,12 @@ class PingMonitorApp(QMainWindow):
         self.export_csv_btn.setObjectName("secondaryBtn")
         actions_row.addWidget(self.export_csv_btn)
 
+        self.export_xlsx_btn = QPushButton("Export XLSX")
+        self.export_xlsx_btn.setEnabled(False)
+        self.export_xlsx_btn.clicked.connect(self.export_report_xlsx)
+        self.export_xlsx_btn.setObjectName("secondaryBtn")
+        actions_row.addWidget(self.export_xlsx_btn)
+
         config_layout.addLayout(actions_row)
         root.addWidget(config_card)
 
@@ -596,7 +628,7 @@ class PingMonitorApp(QMainWindow):
         top = QHBoxLayout()
         dash_title = QLabel("Live Telemetry Table")
         dash_title.setObjectName("strongLabel")
-        self.host_count_label = QLabel("0 hosts")
+        self.host_count_label = QLabel("0 up / 0 total")
         self.host_count_label.setObjectName("captionLabel")
         top.addWidget(dash_title)
         top.addStretch()
@@ -604,6 +636,7 @@ class PingMonitorApp(QMainWindow):
         dash_layout.addLayout(top)
 
         self.table = QTableWidget()
+        self.table.setObjectName("liveTelemetryTable")
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels([
             "Host / IP", "Status", "Seq", "Latency", "Packet Loss", "Failures",
@@ -616,6 +649,7 @@ class PingMonitorApp(QMainWindow):
         self.table.setShowGrid(True)
         self.table.doubleClicked.connect(self.on_table_double_click)
         h = self.table.horizontalHeader()
+        h.setFixedHeight(32)
         h.setSectionResizeMode(QHeaderView.Stretch)
         h.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         dash_layout.addWidget(self.table)
@@ -634,7 +668,7 @@ class PingMonitorApp(QMainWindow):
         down_layout = QVBoxLayout(down_card)
         down_layout.setContentsMargins(14, 12, 14, 12)
         down_layout.setSpacing(6)
-        down_title = QLabel("Degraded / Down Hosts")
+        down_title = QLabel("No ICMP Reply (Host May Still Be Up)")
         down_title.setObjectName("strongLabel")
         self.down_summary_label = QLabel("No targets monitored")
         self.down_summary_label.setObjectName("healthyLabel")
@@ -642,6 +676,7 @@ class PingMonitorApp(QMainWindow):
         down_layout.addWidget(self.down_summary_label)
 
         self.down_table = QTableWidget()
+        self.down_table.setObjectName("noReplyTable")
         self.down_table.setColumnCount(5)
         self.down_table.setHorizontalHeaderLabels(
             ["Host", "Status", "Fails", "Loss", "Last Failed"]
@@ -651,6 +686,7 @@ class PingMonitorApp(QMainWindow):
         self.down_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.down_table.setSortingEnabled(True)
         dh = self.down_table.horizontalHeader()
+        dh.setFixedHeight(32)
         dh.setSectionResizeMode(QHeaderView.Interactive)
         dh.setStretchLastSection(True)
         self.down_table.setShowGrid(True)
@@ -731,6 +767,12 @@ class PingMonitorApp(QMainWindow):
         QLabel#sectionCaption {{
             color: {text_muted};
             font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+        }}
+        QLabel#targetConfigurationCaption {{
+            color: {text_muted};
+            font-size: 11px;
             font-weight: 600;
             letter-spacing: 0.4px;
         }}
@@ -831,6 +873,34 @@ class PingMonitorApp(QMainWindow):
             background: {scroll_handle};
             border-radius: 4px;
         }}
+        QTableWidget#liveTelemetryTable QScrollBar:vertical {{
+            width: 16px;
+            background: transparent;
+            margin: 32px 2px 2px 2px;
+        }}
+        QTableWidget#liveTelemetryTable QScrollBar::handle:vertical {{
+            min-height: 44px;
+            background: {"#3d444d" if dark else "#8c959f"};
+            border: 3px solid {bg_table};
+            border-radius: 8px;
+        }}
+        QTableWidget#liveTelemetryTable QScrollBar::handle:vertical:hover {{
+            background: {"#545d68" if dark else "#6e7781"};
+        }}
+        QTableWidget#noReplyTable QScrollBar:vertical {{
+            width: 16px;
+            background: transparent;
+            margin: 32px 2px 2px 2px;
+        }}
+        QTableWidget#noReplyTable QScrollBar::handle:vertical {{
+            min-height: 44px;
+            background: {"#3d444d" if dark else "#8c959f"};
+            border: 3px solid {bg_table};
+            border-radius: 8px;
+        }}
+        QTableWidget#noReplyTable QScrollBar::handle:vertical:hover {{
+            background: {"#545d68" if dark else "#6e7781"};
+        }}
         QScrollBar::add-line, QScrollBar::sub-line {{
             height: 0;
             width: 0;
@@ -889,13 +959,13 @@ class PingMonitorApp(QMainWindow):
     # ------------------------------------------------------------------ Helpers
     @staticmethod
     def _is_down_status(status):
-        return status in ("Timed Out", "Unreachable", "DNS Error", "Permission Denied", "Probe Error")
+        return status in ("No ICMP Reply", "Unreachable")
 
     @staticmethod
     def _compute_host_stats(data):
         sent = data["sent"]
         received = data["received"]
-        loss_pct = round(((sent - received) / sent) * 100, 1) if sent > 0 else 0.0
+        loss_pct = round(((sent - received) / sent) * 100, 1) if sent > 0 else None
         latency_count = data.get("latency_count", 0)
         if latency_count:
             min_lat = data["min_latency"]
@@ -1063,6 +1133,7 @@ class PingMonitorApp(QMainWindow):
             "interval": self.interval_spin.value(),
             "timeout": self.timeout_spin.value(),
             "history_points": self.history_spin.value(),
+            "max_concurrent": self.concurrency_spin.value(),
             "dark_theme": self._is_dark,
         }
         config_path = Path(self.CONFIG_FILE)
@@ -1109,6 +1180,7 @@ class PingMonitorApp(QMainWindow):
                 ("interval", self.interval_spin, False),
                 ("timeout", self.timeout_spin, False),
                 ("history_points", self.history_spin, True),
+                ("max_concurrent", self.concurrency_spin, True),
             ):
                 if key not in config:
                     continue
@@ -1143,6 +1215,7 @@ class PingMonitorApp(QMainWindow):
                     "interval": self.interval_spin,
                     "timeout": self.timeout_spin,
                     "history_points": self.history_spin,
+                    "max_concurrent": self.concurrency_spin,
                 }[key].setValue(value)
             self._is_dark = dark_theme
 
@@ -1180,6 +1253,7 @@ class PingMonitorApp(QMainWindow):
         self.ping_interval_seconds = self.interval_spin.value()
         self.graph_history_points = self.history_spin.value()
         self.timeout_seconds = self.timeout_spin.value()
+        self.max_concurrent_probes = self.concurrency_spin.value()
 
         self.host_data.clear()
         self._host_items.clear()
@@ -1196,6 +1270,7 @@ class PingMonitorApp(QMainWindow):
                 "min_latency": None,
                 "max_latency": None,
                 "sent": 0,
+                "checks": 0,
                 "received": 0,
                 "timeline_stats": [],
                 "log_rows": [],
@@ -1222,11 +1297,13 @@ class PingMonitorApp(QMainWindow):
 
         self.is_monitoring = True
         self._stop_pending = False
+        self.host_count_label.setText(f"0 up / {len(self.host_data)} total")
         self.set_controls_enabled(False)
         self.start_btn.setText("Stop Monitoring")
         self._set_status_running()
         self.export_txt_btn.setEnabled(False)
         self.export_csv_btn.setEnabled(False)
+        self.export_xlsx_btn.setEnabled(False)
         self.clear_btn.setEnabled(False)
         task = ProbeTask(
             run_id=self._run_id,
@@ -1234,6 +1311,7 @@ class PingMonitorApp(QMainWindow):
             payload_size=self.packet_size_bytes,
             timeout=self.timeout_seconds,
             interval=self.ping_interval_seconds,
+            max_concurrent=self.max_concurrent_probes,
         )
         task.signals.completed.connect(self._handle_probe_result)
         task.signals.finished.connect(self._handle_probe_task_finished)
@@ -1264,6 +1342,7 @@ class PingMonitorApp(QMainWindow):
         self._set_status_idle()
         self.export_txt_btn.setEnabled(bool(self.host_data))
         self.export_csv_btn.setEnabled(bool(self.host_data))
+        self.export_xlsx_btn.setEnabled(bool(self.host_data))
         self.clear_btn.setEnabled(bool(self.host_data))
         self.update_footer_stats()
         if self.host_data and self._confirm(
@@ -1299,7 +1378,7 @@ class PingMonitorApp(QMainWindow):
 
         data = self.host_data[target]
         valid_statuses = {
-            "Connected", "Timed Out", "DNS Error", "Permission Denied", "Probe Error", "Unreachable"
+            "Connected", "No ICMP Reply", "DNS Error", "Permission Denied", "Probe Error", "Unreachable"
         }
         if result.status not in valid_statuses:
             result = ProbeResult("Probe Error", error=f"Unknown probe status: {result.status!r}")
@@ -1310,14 +1389,24 @@ class PingMonitorApp(QMainWindow):
             or result.latency_ms < 0
         ):
             result = ProbeResult("Probe Error", error="The probe returned an invalid latency value.")
-        data["sent"] += 1
-        sequence = data["sent"]
+        if not isinstance(result.packet_sent, bool):
+            result = ProbeResult("Probe Error", error="The probe returned invalid send metadata.", packet_sent=False)
+        elif result.status == "Connected" and not result.packet_sent:
+            result = ProbeResult("Probe Error", error="A connected result must correspond to a sent packet.", packet_sent=False)
+        elif result.status in {"DNS Error", "Permission Denied", "Probe Error"} and result.packet_sent:
+            result = ProbeResult(
+                result.status, error=result.error, packet_sent=False
+            )
+        data["checks"] = data.get("checks", data["sent"]) + 1
+        if result.packet_sent:
+            data["sent"] += 1
+        sequence = data["checks"]
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         status = result.status
         data["last_status"] = status
         data["last_error"] = result.error
 
-        if status == "Connected" and result.latency_ms is not None:
+        if status == "Connected" and result.latency_ms is not None and result.packet_sent:
             latency = result.latency_ms
             data["received"] += 1
             data["latencies"].append(latency)
@@ -1330,9 +1419,11 @@ class PingMonitorApp(QMainWindow):
             timeline = f"[{timestamp}] Seq {sequence}: Success — Latency {latency:.2f} ms"
             log_result = (sequence, timestamp, "Success", latency)
         else:
-            data["latencies"].append(0)
+            if result.packet_sent:
+                data["latencies"].append(0)
             data["consecutive_fails"] += 1
-            data["last_down_time"] = timestamp
+            if self._is_down_status(status):
+                data["last_down_time"] = timestamp
             latency_text = "—"
             error_text = f" — {result.error}" if result.error else ""
             timeline = f"[{timestamp}] Seq {sequence}: FAILED — {status}{error_text}"
@@ -1343,13 +1434,16 @@ class PingMonitorApp(QMainWindow):
         del data["timeline_stats"][:-self.MAX_LOG_ENTRIES]
         del data["log_rows"][:-self.MAX_LOG_ENTRIES]
 
-        loss_pct = round(((data["sent"] - data["received"]) / data["sent"]) * 100, 1)
+        loss_pct = (
+            round(((data["sent"] - data["received"]) / data["sent"]) * 100, 1)
+            if data["sent"] else None
+        )
         row_values = (
             target,
             status,
             str(sequence),
             latency_text,
-            f"{loss_pct}%",
+            f"{loss_pct}%" if loss_pct is not None else "n/a",
             str(data["consecutive_fails"]),
         )
         self.update_row(target, row_values)
@@ -1363,6 +1457,7 @@ class PingMonitorApp(QMainWindow):
         self.interval_spin.setEnabled(enabled)
         self.timeout_spin.setEnabled(enabled)
         self.history_spin.setEnabled(enabled)
+        self.concurrency_spin.setEnabled(enabled)
 
     @Slot(str, object)
     def update_row(self, host, values):
@@ -1388,7 +1483,7 @@ class PingMonitorApp(QMainWindow):
         status_item = self.table.item(row, 1)
         if status == "Connected":
             status_item.setForeground(QColor("#3fb950" if dark else "#1a7f37"))
-        elif status == "Timed Out":
+        elif status == "No ICMP Reply":
             status_item.setForeground(QColor("#d29922" if dark else "#9a6700"))
         else:
             status_item.setForeground(QColor("#f85149" if dark else "#cf222e"))
@@ -1422,7 +1517,7 @@ class PingMonitorApp(QMainWindow):
         self._last_down_signature = None
         self.table.setRowCount(0)
         self.down_table.setRowCount(0)
-        self.host_count_label.setText("0 hosts")
+        self.host_count_label.setText("0 up / 0 total")
         self.down_summary_label.setText("No targets monitored")
         dark = self._is_dark
         self.down_summary_label.setStyleSheet(
@@ -1431,6 +1526,7 @@ class PingMonitorApp(QMainWindow):
         self.chart.set_data({}, self.graph_history_points)
         self.export_txt_btn.setEnabled(False)
         self.export_csv_btn.setEnabled(False)
+        self.export_xlsx_btn.setEnabled(False)
         self.clear_btn.setEnabled(False)
         self.update_footer_stats()
 
@@ -1438,14 +1534,23 @@ class PingMonitorApp(QMainWindow):
         if not self.host_data:
             self.update_footer_stats()
             return
-        self.host_count_label.setText(f"{len(self.host_data)} hosts")
+        up_count = sum(data.get("last_status") == "Connected" for data in self.host_data.values())
+        self.host_count_label.setText(f"{up_count} up / {len(self.host_data)} total")
         self.chart.set_data(self.host_data, self.graph_history_points)
-        pending_count = sum(1 for data in self.host_data.values() if data.get("sent", 0) == 0)
+        pending_count = sum(
+            1 for data in self.host_data.values()
+            if data.get("checks", data.get("sent", 0)) == 0
+        )
         down_hosts = [
             (host, data)
             for host, data in self.host_data.items()
             if self._is_down_status(data.get("last_status"))
         ]
+        probe_issue_signature = tuple(
+            (host, data.get("last_status"))
+            for host, data in self.host_data.items()
+            if data.get("last_status") in {"DNS Error", "Permission Denied", "Probe Error"}
+        )
         signature = (
             tuple(
                 (
@@ -1457,33 +1562,37 @@ class PingMonitorApp(QMainWindow):
                 for host, data in down_hosts
             ),
             pending_count,
+            probe_issue_signature,
         )
         if signature != self._last_down_signature:
             self._last_down_signature = signature
+            self.down_table.setSortingEnabled(False)
             self.down_table.setRowCount(0)
             dark = self._is_dark
-            if down_hosts and pending_count:
-                self.down_summary_label.setText(
-                    f"{len(down_hosts)} degraded/down · {pending_count} awaiting first result"
-                )
+            probe_issues = len(probe_issue_signature)
+            summary_parts = []
+            if down_hosts:
+                summary_parts.append(f"{len(down_hosts)} of {len(self.host_data)} down")
+            if probe_issues:
+                summary_parts.append(f"{probe_issues} DNS/probe issue(s)")
+            if pending_count:
+                summary_parts.append(f"{pending_count} awaiting first result")
+
+            if summary_parts:
+                self.down_summary_label.setText(" · ".join(summary_parts))
+                if down_hosts:
+                    color = "#f85149"
+                elif probe_issues:
+                    color = "#d29922"
+                else:
+                    color = "#848d97" if dark else "#656d76"
                 self.down_summary_label.setStyleSheet(
-                    "color: #f85149; font-weight: 600; background: transparent;"
-                )
-            elif pending_count:
-                self.down_summary_label.setText(f"{pending_count} target(s) awaiting first result")
-                muted = "#848d97" if dark else "#656d76"
-                self.down_summary_label.setStyleSheet(
-                    f"color: {muted}; font-weight: 600; background: transparent;"
-                )
-            elif not down_hosts:
-                self.down_summary_label.setText("All hosts operational")
-                self.down_summary_label.setStyleSheet(
-                    f"color: {'#3fb950' if dark else '#1a7f37'}; font-weight: 600; background: transparent;"
+                    f"color: {color}; font-weight: 600; background: transparent;"
                 )
             else:
-                self.down_summary_label.setText(f"{len(down_hosts)} host(s) degraded or down")
+                self.down_summary_label.setText("No current ICMP failures")
                 self.down_summary_label.setStyleSheet(
-                    "color: #f85149; font-weight: 600; background: transparent;"
+                    f"color: {'#3fb950' if dark else '#1a7f37'}; font-weight: 600; background: transparent;"
                 )
             if down_hosts:
                 text_color = QColor("#e6edf3" if dark else "#1f2328")
@@ -1493,12 +1602,12 @@ class PingMonitorApp(QMainWindow):
                     self.down_table.insertRow(row)
                     sent = data["sent"]
                     received = data["received"]
-                    loss = round(((sent - received) / sent) * 100, 1) if sent else 0.0
+                    loss = round(((sent - received) / sent) * 100, 1) if sent else None
                     values = [
                         host,
                         data.get("last_status", "Down"),
                         data.get("consecutive_fails", 0),
-                        f"{loss}%",
+                        f"{loss}%" if loss is not None else "n/a",
                         data.get("last_down_time", "-"),
                     ]
                     for col, value in enumerate(values):
@@ -1507,6 +1616,7 @@ class PingMonitorApp(QMainWindow):
                         item.setForeground(text_color)
                         item.setBackground(bg_color)
                         self.down_table.setItem(row, col, item)
+            self.down_table.setSortingEnabled(True)
         self.update_footer_stats()
 
     def update_footer_stats(self):
@@ -1515,15 +1625,79 @@ class PingMonitorApp(QMainWindow):
             return
         total_sent = sum(d["sent"] for d in self.host_data.values())
         total_recv = sum(d["received"] for d in self.host_data.values())
-        overall_loss = ((total_sent - total_recv) / total_sent * 100) if total_sent else 0.0
+        overall_loss = ((total_sent - total_recv) / total_sent * 100) if total_sent else None
+        no_reply = sum(
+            self._is_down_status(d.get("last_status")) for d in self.host_data.values()
+        )
+        probe_issues = sum(
+            d.get("last_status") in {"DNS Error", "Permission Denied", "Probe Error"}
+            for d in self.host_data.values()
+        )
         state = "Waiting for first results" if self.is_monitoring and not total_sent else (
             "Monitoring" if self.is_monitoring else "Stopped"
         )
         self.footer_label.setText(
-            f"{len(self.host_data)} targets  |  Aggregate loss: {overall_loss:.1f}%  |  {state}"
+            f"{len(self.host_data)} targets  |  ICMP loss: {overall_loss:.1f}%" if overall_loss is not None else
+            f"{len(self.host_data)} targets  |  ICMP loss: n/a"
+        )
+        self.footer_label.setText(
+            self.footer_label.text()
+            + f"  |  No reply: {no_reply}  |  DNS/probe issues: {probe_issues}  |  {state}"
         )
 
     # ------------------------------------------------------------------ Export
+    def _summary_info(self, data_snapshot):
+        statuses = [data.get("last_status") for data in data_snapshot.values()]
+        total_sent = sum(data.get("sent", 0) for data in data_snapshot.values())
+        total_received = sum(data.get("received", 0) for data in data_snapshot.values())
+        latency_samples = sum(data.get("latency_count", 0) for data in data_snapshot.values())
+        latency_sum = sum(data.get("latency_sum", 0.0) for data in data_snapshot.values())
+        minima = [data.get("min_latency") for data in data_snapshot.values()
+                  if data.get("min_latency") is not None]
+        maxima = [data.get("max_latency") for data in data_snapshot.values()
+                  if data.get("max_latency") is not None]
+        loss_pct = (
+            round((total_sent - total_received) / total_sent * 100, 1)
+            if total_sent else None
+        )
+        return {
+            "Report generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "Monitoring state": "Monitoring" if self.is_monitoring else "Stopped",
+            "Target status counts based on": "Each target's latest probe result",
+            "Total targets": len(data_snapshot),
+            "Targets responding to ICMP": sum(status == "Connected" for status in statuses),
+            "Targets with no ICMP reply": sum(self._is_down_status(status) for status in statuses),
+            "DNS errors": sum(status == "DNS Error" for status in statuses),
+            "Permission errors": sum(status == "Permission Denied" for status in statuses),
+            "Probe errors": sum(status == "Probe Error" for status in statuses),
+            "Awaiting first result": sum(status is None for status in statuses),
+            "Completed checks": sum(
+                data.get("checks", data.get("sent", 0)) for data in data_snapshot.values()
+            ),
+            "ICMP requests sent": total_sent,
+            "ICMP replies received": total_received,
+            "ICMP packet loss (%)": loss_pct if loss_pct is not None else "N/A",
+            "Latency samples": latency_samples,
+            "Minimum latency (ms)": min(minima) if minima else "N/A",
+            "Average latency (ms)": round(latency_sum / latency_samples, 2) if latency_samples else "N/A",
+            "Maximum latency (ms)": max(maxima) if maxima else "N/A",
+        }
+
+    @staticmethod
+    def _style_workbook_table(sheet, header_row=1):
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        sheet.freeze_panes = f"A{header_row + 1}"
+        sheet.sheet_view.showGridLines = False
+        if sheet.max_row >= header_row and sheet.max_column:
+            sheet.auto_filter.ref = (
+                f"A{header_row}:{sheet.cell(sheet.max_row, sheet.max_column).coordinate}"
+            )
+        for cell in sheet[header_row]:
+            cell.fill = PatternFill("solid", fgColor="1F4E78")
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.alignment = Alignment(vertical="center")
+
     def export_report_summary(self):
         if not self.host_data:
             self._msg("No Data", "No monitoring data available for export.", QMessageBox.Warning)
@@ -1533,13 +1707,14 @@ class PingMonitorApp(QMainWindow):
             "Export Summary Report",
             "Text Files (*.txt);;All Files (*)",
             save=True,
-            default_name="network_report.txt",
+            default_name=f"network_report_{time.strftime('%Y%m%d_%H%M%S')}.txt",
             default_suffix="txt",
         )
         if not file_path:
             return
 
         data_snapshot = {host: dict(data) for host, data in self.host_data.items()}
+        summary_info = self._summary_info(data_snapshot)
 
         try:
             with open(file_path, "w", encoding="utf-8") as f:
@@ -1548,7 +1723,13 @@ class PingMonitorApp(QMainWindow):
                 f.write(f"             Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("=" * 70 + "\n\n")
 
-                f.write("[1. HOST AGGREGATE METRICS]\n")
+                f.write("[1. SUMMARY INFO]\n")
+                f.write("-" * 50 + "\n")
+                for metric, value in summary_info.items():
+                    f.write(f"{metric:<34}: {value}\n")
+                f.write("\n")
+
+                f.write("[2. HOST AGGREGATE METRICS]\n")
                 f.write("-" * 80 + "\n")
                 f.write(
                     f"{'Target Host':<20} | {'Sent':<6} | {'Recv':<6} | {'Loss %':<8} | "
@@ -1562,13 +1743,14 @@ class PingMonitorApp(QMainWindow):
                         min_lat, max_lat, avg_lat = "-", "-", "-"
                     else:
                         min_lat, max_lat, avg_lat = f"{min_lat}ms", f"{max_lat}ms", f"{avg_lat}ms"
+                    loss_text = f"{loss_pct}%" if loss_pct is not None else "n/a"
                     f.write(
-                        f"{host:<20} | {sent:<6} | {received:<6} | {str(loss_pct) + '%':<8} | "
+                        f"{host:<20} | {sent:<6} | {received:<6} | {loss_text:<8} | "
                         f"{min_lat:<9} | {max_lat:<9} | {avg_lat:<9}\n"
                     )
                 f.write("-" * 80 + "\n\n")
 
-                f.write("[2. DEGRADED / DOWN HOSTS AT EXPORT]\n")
+                f.write("[3. TARGETS WITHOUT AN ICMP REPLY]\n")
                 f.write("-" * 50 + "\n")
                 down_now = [
                     h for h, d in data_snapshot.items() if self._is_down_status(d.get("last_status"))
@@ -1579,10 +1761,10 @@ class PingMonitorApp(QMainWindow):
                             f"• {h} (last failed: {data_snapshot[h].get('last_down_time', '-')})\n"
                         )
                 else:
-                    f.write("All hosts operational.\n")
+                    f.write("No target recorded an ICMP timeout. Web-service health is not tested.\n")
                 f.write("\n")
 
-                f.write("[3. DETAILED SEQUENCE TIMELINES]\n")
+                f.write("[4. DETAILED SEQUENCE TIMELINES]\n")
                 for host, data in data_snapshot.items():
                     f.write(f"\n# Stream: {host}\n")
                     f.write("-" * 50 + "\n")
@@ -1593,6 +1775,99 @@ class PingMonitorApp(QMainWindow):
         except Exception as e:
             self._msg("Error", f"Failed to write report:\n{str(e)}", QMessageBox.Critical)
 
+    def export_report_xlsx(self):
+        if not self.host_data:
+            self._msg("No Data", "No monitoring data available for export.", QMessageBox.Warning)
+            return
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Alignment, Font, PatternFill
+        except ImportError:
+            self._msg(
+                "XLSX Export Unavailable",
+                "Install the project dependencies to enable Excel export:\n"
+                "python -m pip install -r requirements.txt",
+                QMessageBox.Warning,
+            )
+            return
+
+        file_path = self._open_file_dialog(
+            "Export Excel Workbook",
+            "Excel Workbooks (*.xlsx);;All Files (*)",
+            save=True,
+            default_name=f"network_report_{time.strftime('%Y%m%d_%H%M%S')}.xlsx",
+            default_suffix="xlsx",
+        )
+        if not file_path:
+            return
+
+        data_snapshot = {host: dict(data) for host, data in self.host_data.items()}
+        summary_info = self._summary_info(data_snapshot)
+        try:
+            workbook = Workbook()
+            summary_sheet = workbook.active
+            summary_sheet.title = "Summary Info"
+            summary_sheet.merge_cells("A1:B1")
+            summary_sheet["A1"] = "Ping Monitor Summary Info"
+            summary_sheet["A1"].font = Font(size=16, bold=True, color="FFFFFF")
+            summary_sheet["A1"].fill = PatternFill("solid", fgColor="17365D")
+            summary_sheet["A1"].alignment = Alignment(vertical="center")
+            summary_sheet.row_dimensions[1].height = 28
+            summary_sheet.append(["Generated", summary_info["Report generated"]])
+            summary_sheet.append(["Monitoring state", summary_info["Monitoring state"]])
+            summary_sheet.append([])
+            summary_sheet.append(["Metric", "Value"])
+            for metric, value in summary_info.items():
+                if metric not in {"Report generated", "Monitoring state"}:
+                    summary_sheet.append([metric, value])
+            self._style_workbook_table(summary_sheet, header_row=4)
+            summary_sheet.column_dimensions["A"].width = 34
+            summary_sheet.column_dimensions["B"].width = 24
+
+            host_sheet = workbook.create_sheet("Host Details")
+            host_sheet.append([
+                "Host", "Last Status", "Checks", "ICMP Sent", "ICMP Received",
+                "Loss %", "Min ms", "Max ms", "Avg ms", "Consecutive Failures",
+                "Last No Reply",
+            ])
+            for host, data in data_snapshot.items():
+                sent, received, loss, minimum, maximum, average = self._compute_host_stats(data)
+                host_sheet.append([
+                    host, data.get("last_status") or "Awaiting first result",
+                    data.get("checks", sent), sent, received,
+                    loss if loss is not None else "N/A",
+                    minimum if minimum is not None else "N/A",
+                    maximum if maximum is not None else "N/A",
+                    average if average is not None else "N/A",
+                    data.get("consecutive_fails", 0), data.get("last_down_time", "-"),
+                ])
+            self._style_workbook_table(host_sheet)
+            host_sheet.column_dimensions["A"].width = 30
+            host_sheet.column_dimensions["B"].width = 24
+            for column in "CDEFGHIJ":
+                host_sheet.column_dimensions[column].width = 18
+            host_sheet.column_dimensions["K"].width = 22
+
+            probe_sheet = workbook.create_sheet("Probe Details")
+            probe_sheet.append(["Host", "Sequence", "Timestamp", "Status", "Latency ms", "Details"])
+            for host, data in data_snapshot.items():
+                for sequence, timestamp, status, details in data.get("log_rows", []):
+                    probe_sheet.append([
+                        host, sequence, timestamp,
+                        "Connected" if status == "Success" else status,
+                        details if status == "Success" else None,
+                        "" if status == "Success" else details,
+                    ])
+            self._style_workbook_table(probe_sheet)
+            for column, width in {"A": 30, "B": 12, "C": 22, "D": 24, "E": 16, "F": 50}.items():
+                probe_sheet.column_dimensions[column].width = width
+
+            workbook.save(file_path)
+            self._msg("Success", f"Excel workbook successfully exported to:\n{file_path}")
+        except Exception as e:
+            self._msg("Error", f"Failed to write Excel workbook:\n{e}", QMessageBox.Critical)
+
     def export_report_csv(self):
         if not self.host_data:
             self._msg("No Data", "No monitoring data available for export.", QMessageBox.Warning)
@@ -1602,7 +1877,7 @@ class PingMonitorApp(QMainWindow):
             "Export CSV Report",
             "CSV Files (*.csv);;All Files (*)",
             save=True,
-            default_name="network_report.csv",
+            default_name=f"network_report_{time.strftime('%Y%m%d_%H%M%S')}.csv",
             default_suffix="csv",
         )
         if not file_path:
@@ -1628,7 +1903,7 @@ class PingMonitorApp(QMainWindow):
                         "Status": data.get("last_status") or "-",
                         "Sent": sent,
                         "Received": received,
-                        "Loss_Pct": loss_pct,
+                        "Loss_Pct": loss_pct if loss_pct is not None else "",
                         "Min_ms": min_lat if min_lat is not None else "",
                         "Max_ms": max_lat if max_lat is not None else "",
                         "Avg_ms": avg_lat if avg_lat is not None else "",
@@ -1638,7 +1913,7 @@ class PingMonitorApp(QMainWindow):
                     })
                     if self._is_down_status(data.get("last_status")):
                         writer.writerow({
-                            "Section": "Down",
+                            "Section": "No ICMP Reply",
                             "Host": host,
                             "Status": data.get("last_status"),
                             "Consecutive_Fails": data.get("consecutive_fails", 0),
