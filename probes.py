@@ -11,8 +11,8 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional
 
 from icmplib import ICMPLibError, NameLookupError, SocketPermissionError, async_ping
 from PySide6.QtCore import QObject, QRunnable, Signal
@@ -23,11 +23,11 @@ DNS_NEGATIVE_CACHE_TTL = 10.0  # 10 seconds backoff for unresolvable domains
 MAX_CONCURRENT_DNS_LOOKUPS = 40
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ProbeResult:
     status: str
-    latency_ms: Optional[float] = None
-    error: Optional[str] = None
+    latency_ms: float | None = None
+    error: str | None = None
     packet_sent: bool = True
 
 
@@ -42,10 +42,10 @@ class DNSResolver:
     ):
         self.ttl = ttl
         self.negative_ttl = negative_ttl
-        self.max_concurrent = max_concurrent
+        self.max_concurrent = max(1, int(max_concurrent))
         self._cache: dict[str, tuple[str, float]] = {}
         self._negative_cache: dict[str, tuple[Exception, float]] = {}
-        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._semaphore: asyncio.Semaphore | None = None
 
     @staticmethod
     def is_ip(target: str) -> bool:
@@ -117,6 +117,28 @@ class DNSResolver:
                     self._negative_cache[target] = (err, now + self.negative_ttl)
                     raise err
 
+    async def pre_resolve_all(self, targets: Sequence[str]) -> dict[str, str | None]:
+        """Pre-resolve targets concurrently to warm the DNS cache before probing starts."""
+        non_ips = [target for target in targets if not self.is_ip(target)]
+        if not non_ips:
+            return {}
+
+        async def _resolve_safe(target: str) -> tuple[str, str | None]:
+            try:
+                ip = await asyncio.wait_for(self.resolve(target), timeout=2.5)
+                return target, ip
+            except Exception:
+                return target, None
+
+        results = await asyncio.gather(
+            *(_resolve_safe(target) for target in non_ips), return_exceptions=True
+        )
+        resolved: dict[str, str | None] = {}
+        for item in results:
+            if isinstance(item, tuple):
+                resolved[item[0]] = item[1]
+        return resolved
+
     def clear_cache(self):
         self._cache.clear()
         self._negative_cache.clear()
@@ -127,14 +149,14 @@ class AsyncICMPSession:
 
     def __init__(self, payload_size: int = 56):
         self.payload_size = payload_size
-        self._v4_sock: Optional[socket.socket] = None
-        self._v6_sock: Optional[socket.socket] = None
+        self._v4_sock: socket.socket | None = None
+        self._v6_sock: socket.socket | None = None
         self._pending_v4: dict[tuple[int, int], tuple[asyncio.Future, float]] = {}
         self._pending_v6: dict[tuple[int, int], tuple[asyncio.Future, float]] = {}
         self._seq = 0
         self._id = random.randint(1, 65535)
         self._receiver_tasks: list[asyncio.Task] = []
-        self._stop_event: Optional[asyncio.Event] = None
+        self._stop_event: asyncio.Event | None = None
         self._is_active = False
 
     @staticmethod
@@ -151,14 +173,16 @@ class AsyncICMPSession:
         """Attempt to open multiplexed raw ICMP sockets."""
         try:
             self._v4_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
-            self._v4_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+            self._v4_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+            self._v4_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
             self._v4_sock.setblocking(False)
         except OSError:
             self._v4_sock = None
 
         try:
             self._v6_sock = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)
-            self._v6_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+            self._v6_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+            self._v6_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
             self._v6_sock.setblocking(False)
         except OSError:
             self._v6_sock = None
@@ -174,29 +198,53 @@ class AsyncICMPSession:
             self._receiver_tasks.append(asyncio.create_task(self._v6_receiver()))
         return True
 
+    def _process_v4_packet(self, data: bytes, recv_time: float) -> None:
+        if len(data) >= 28:
+            ip_header_len = (data[0] & 0x0F) * 4
+            if len(data) >= ip_header_len + 8:
+                icmp_header = data[ip_header_len : ip_header_len + 8]
+                icmp_type, _code, _chk, pkt_id, seq = struct.unpack("!BBHHH", icmp_header)
+                if icmp_type == 0:  # Echo Reply
+                    key = (pkt_id, seq)
+                    item = self._pending_v4.pop(key, None)
+                    if item is not None:
+                        fut, send_time = item
+                        if not fut.done():
+                            latency = round((recv_time - send_time) * 1000, 2)
+                            fut.set_result(latency)
+
     async def _v4_receiver(self):
         loop = asyncio.get_running_loop()
         while self._is_active and not self._stop_event.is_set():
             try:
                 data = await loop.sock_recv(self._v4_sock, 2048)
                 recv_time = time.monotonic()
-                if len(data) >= 28:
-                    ip_header_len = (data[0] & 0x0F) * 4
-                    if len(data) >= ip_header_len + 8:
-                        icmp_header = data[ip_header_len : ip_header_len + 8]
-                        icmp_type, _code, _chk, pkt_id, seq = struct.unpack("!BBHHH", icmp_header)
-                        if icmp_type == 0:  # Echo Reply
-                            key = (pkt_id, seq)
-                            item = self._pending_v4.pop(key, None)
-                            if item is not None:
-                                fut, send_time = item
-                                if not fut.done():
-                                    latency = round((recv_time - send_time) * 1000, 2)
-                                    fut.set_result(latency)
+                self._process_v4_packet(data, recv_time)
+                # Drain all pending packets from socket receive buffer immediately
+                while self._is_active and not self._stop_event.is_set():
+                    try:
+                        more_data = self._v4_sock.recv(2048)
+                        if not more_data:
+                            break
+                        self._process_v4_packet(more_data, time.monotonic())
+                    except (BlockingIOError, InterruptedError):
+                        break
             except (asyncio.CancelledError, OSError):
                 if not self._is_active or self._stop_event.is_set():
                     break
                 await asyncio.sleep(0.001)
+
+    def _process_v6_packet(self, data: bytes, recv_time: float) -> None:
+        if len(data) >= 8:
+            icmp_type, _code, _chk, pkt_id, seq = struct.unpack("!BBHHH", data[:8])
+            if icmp_type == 129:  # ICMPv6 Echo Reply
+                key = (pkt_id, seq)
+                item = self._pending_v6.pop(key, None)
+                if item is not None:
+                    fut, send_time = item
+                    if not fut.done():
+                        latency = round((recv_time - send_time) * 1000, 2)
+                        fut.set_result(latency)
 
     async def _v6_receiver(self):
         loop = asyncio.get_running_loop()
@@ -204,22 +252,22 @@ class AsyncICMPSession:
             try:
                 data = await loop.sock_recv(self._v6_sock, 2048)
                 recv_time = time.monotonic()
-                if len(data) >= 8:
-                    icmp_type, _code, _chk, pkt_id, seq = struct.unpack("!BBHHH", data[:8])
-                    if icmp_type == 129:  # ICMPv6 Echo Reply
-                        key = (pkt_id, seq)
-                        item = self._pending_v6.pop(key, None)
-                        if item is not None:
-                            fut, send_time = item
-                            if not fut.done():
-                                latency = round((recv_time - send_time) * 1000, 2)
-                                fut.set_result(latency)
+                self._process_v6_packet(data, recv_time)
+                # Drain all pending packets from socket receive buffer immediately
+                while self._is_active and not self._stop_event.is_set():
+                    try:
+                        more_data = self._v6_sock.recv(2048)
+                        if not more_data:
+                            break
+                        self._process_v6_packet(more_data, time.monotonic())
+                    except (BlockingIOError, InterruptedError):
+                        break
             except (asyncio.CancelledError, OSError):
                 if not self._is_active or self._stop_event.is_set():
                     break
                 await asyncio.sleep(0.001)
 
-    async def ping(self, ip: str, timeout: float) -> Optional[float]:
+    async def ping(self, ip: str, timeout: float) -> float | None:
         """Send an ICMP echo request and await reply."""
         is_v6 = ":" in ip
         sock = self._v6_sock if is_v6 else self._v4_sock
@@ -302,7 +350,7 @@ async def probe_target(
     target: str,
     payload_size: int,
     timeout: float,
-    destination_ip: Optional[str] = None,
+    destination_ip: str | None = None,
 ) -> ProbeResult:
     """Send one portable asynchronous ICMP echo request."""
     dest = destination_ip if destination_ip is not None else target
@@ -328,6 +376,7 @@ async def probe_target(
 
 class ProbeSignals(QObject):
     completed = Signal(int, str, object)
+    batch_completed = Signal(int, list)
     finished = Signal(int)
 
 
@@ -337,7 +386,7 @@ class ProbeTask(QRunnable):
     def __init__(
         self,
         run_id: int,
-        targets: list[str],
+        targets: Sequence[str],
         payload_size: int,
         timeout: float,
         interval: float,
@@ -345,18 +394,19 @@ class ProbeTask(QRunnable):
     ):
         super().__init__()
         self.run_id = run_id
-        self.targets = targets
+        self.targets = list(targets)
         self.payload_size = payload_size
         self.timeout = timeout
         self.interval = interval
         self.max_concurrent = min(MAX_CONCURRENT_PROBES, max(1, int(max_concurrent)))
-        self._semaphore = None
+        self._semaphore: asyncio.Semaphore | None = None
         self._dns_resolver = DNSResolver()
-        self._icmp_session: Optional[AsyncICMPSession] = None
+        self._icmp_session: AsyncICMPSession | None = None
         self.signals = ProbeSignals()
         self._stop_requested = threading.Event()
-        self._loop = None
-        self._async_stop_event = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._async_stop_event: asyncio.Event | None = None
+        self._result_queue: asyncio.Queue | None = None
 
     def request_stop(self):
         self._stop_requested.set()
@@ -370,8 +420,37 @@ class ProbeTask(QRunnable):
             except RuntimeError:
                 pass
 
-    async def _monitor_target(self, target: str):
+    async def _emit_result(self, target: str, result: ProbeResult):
+        self.signals.completed.emit(self.run_id, target, result)
+        if self._result_queue is not None:
+            await self._result_queue.put((target, result))
+
+    async def _flusher(self):
+        while not self._async_stop_event.is_set() or (self._result_queue and not self._result_queue.empty()):
+            batch = []
+            try:
+                first = await asyncio.wait_for(self._result_queue.get(), timeout=0.05)
+                batch.append(first)
+                self._result_queue.task_done()
+                while not self._result_queue.empty() and len(batch) < 100:
+                    batch.append(self._result_queue.get_nowait())
+                    self._result_queue.task_done()
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            if batch:
+                self.signals.batch_completed.emit(self.run_id, batch)
+            if self._async_stop_event.is_set() and (self._result_queue is None or self._result_queue.empty()):
+                break
+
+    async def _monitor_target(self, target: str, initial_delay: float = 0.0):
         loop = asyncio.get_running_loop()
+        if initial_delay > 0:
+            try:
+                await asyncio.wait_for(self._async_stop_event.wait(), timeout=initial_delay)
+                return
+            except asyncio.TimeoutError:
+                pass
+
         while not self._async_stop_event.is_set():
             started = loop.time()
             try:
@@ -380,17 +459,16 @@ class ProbeTask(QRunnable):
                     try:
                         dest_ip = await self._dns_resolver.resolve(target)
                     except NameLookupError as error:
-                        result = ProbeResult("DNS Error", error=str(error), packet_sent=False)
-                        if self._async_stop_event.is_set():
+                        # Attempt one quick retry to avoid transient network drops
+                        try:
+                            await asyncio.sleep(0.1)
+                            dest_ip = await self._dns_resolver.resolve(target)
+                        except NameLookupError:
+                            result = ProbeResult("DNS Error", error=str(error), packet_sent=False)
+                            if self._async_stop_event.is_set():
+                                return
+                            await self._emit_result(target, result)
                             return
-                        self.signals.completed.emit(self.run_id, target, result)
-                        delay = max(0.0, self.interval - (loop.time() - started))
-                        if delay:
-                            try:
-                                await asyncio.wait_for(self._async_stop_event.wait(), timeout=delay)
-                            except asyncio.TimeoutError:
-                                pass
-                        continue
 
                 if self._icmp_session is not None and dest_ip:
                     try:
@@ -413,7 +491,10 @@ class ProbeTask(QRunnable):
 
             if self._async_stop_event.is_set():
                 return
-            self.signals.completed.emit(self.run_id, target, result)
+            await self._emit_result(target, result)
+
+            if result.status == "DNS Error":
+                return
 
             delay = max(0.0, self.interval - (loop.time() - started))
             if delay:
@@ -425,33 +506,71 @@ class ProbeTask(QRunnable):
     async def _run(self):
         self._loop = asyncio.get_running_loop()
         self._async_stop_event = asyncio.Event()
+        self._result_queue = asyncio.Queue()
+        flusher_task = asyncio.create_task(self._flusher())
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         if self._stop_requested.is_set():
             self._async_stop_event.set()
-        if await self._supports_fping_json():
-            used_fping = await self._run_fping()
-            if used_fping or self._async_stop_event.is_set():
-                return
-
-        # Initialize high-performance multiplexed ICMP session when not mocked
-        if (
-            hasattr(async_ping, "mock_calls")
-            or hasattr(async_ping, "assert_called")
-            or "Mock" in type(async_ping).__name__
-        ):
-            self._icmp_session = None
-        else:
-            self._icmp_session = AsyncICMPSession(self.payload_size)
-            session_started = await self._icmp_session.start()
-            if not session_started:
-                self._icmp_session = None
 
         try:
-            await asyncio.gather(*(self._monitor_target(target) for target in self.targets))
-        finally:
-            if self._icmp_session is not None:
-                self._icmp_session.close()
+            if await self._supports_fping_json():
+                used_fping = await self._run_fping()
+                if used_fping or self._async_stop_event.is_set():
+                    return
+
+            # Pre-resolve hostnames concurrently before probe loop to eliminate DNS jitter
+            if self._dns_resolver is not None and not self._async_stop_event.is_set():
+                try:
+                    await self._dns_resolver.pre_resolve_all(self.targets)
+                except Exception:
+                    pass
+
+            if self._async_stop_event.is_set():
+                return
+
+            # Initialize high-performance multiplexed ICMP session when not mocked
+            if (
+                hasattr(async_ping, "mock_calls")
+                or hasattr(async_ping, "assert_called")
+                or "Mock" in type(async_ping).__name__
+            ):
                 self._icmp_session = None
+            else:
+                self._icmp_session = AsyncICMPSession(self.payload_size)
+                session_started = await self._icmp_session.start()
+                if not session_started:
+                    self._icmp_session = None
+
+            # Stagger the initial dispatch across the interval cycle to avoid microburst drops
+            target_count = len(self.targets)
+            stagger_step = (
+                min(0.05, (self.interval * 0.95) / max(1, target_count))
+                if target_count > 1
+                else 0.0
+            )
+
+            try:
+                tasks = [
+                    self._monitor_target(target, initial_delay=idx * stagger_step)
+                    for idx, target in enumerate(self.targets)
+                ]
+                await asyncio.gather(*tasks)
+            finally:
+                if self._icmp_session is not None:
+                    self._icmp_session.close()
+                    self._icmp_session = None
+        finally:
+            if self._async_stop_event is not None:
+                self._async_stop_event.set()
+            if flusher_task is not None:
+                flusher_task.cancel()
+                await asyncio.gather(flusher_task, return_exceptions=True)
+            if self._result_queue is not None:
+                final_batch = []
+                while not self._result_queue.empty():
+                    final_batch.append(self._result_queue.get_nowait())
+                if final_batch:
+                    self.signals.batch_completed.emit(self.run_id, final_batch)
 
     async def _supports_fping_json(self) -> bool:
         """Only enable the Linux backend when fping's structured output exists."""
@@ -474,12 +593,18 @@ class ProbeTask(QRunnable):
 
     async def _run_fping(self) -> bool:
         """Use fping's single paced event loop instead of one socket per host."""
-        period_ms = max(10, round(max(self.interval, self.timeout) * 1000))
+        target_count = len(self.targets)
+        requested_period_ms = max(10, round(max(self.interval, self.timeout) * 1000))
         timeout_ms = max(1, round(self.timeout * 1000))
+        gap_budget_ms = max(1, requested_period_ms // max(1, target_count))
+        send_gap_ms = min(10, gap_budget_ms)
+        effective_period_ms = max(requested_period_ms, send_gap_ms * target_count)
+
         command = [
             self._fping_executable, "--json", "--loop",
             "--size", str(self.payload_size),
-            "--period", str(period_ms),
+            "-i", str(send_gap_ms),
+            "--period", str(effective_period_ms),
             "--timeout", str(timeout_ms),
             "--retry", "0",
         ]
@@ -517,7 +642,7 @@ class ProbeTask(QRunnable):
                     else:
                         result = ProbeResult("No ICMP Reply")
                     results_seen += 1
-                    self.signals.completed.emit(self.run_id, target, result)
+                    await self._emit_result(target, result)
                 except (ValueError, TypeError, KeyError, json.JSONDecodeError):
                     continue
 
@@ -551,22 +676,27 @@ class ProbeTask(QRunnable):
             return False
         if process.returncode not in (0, 1, -15) and not self._async_stop_event.is_set():
             error_text = stderr or f"fping exited with code {process.returncode}"
+            error_batch = []
             for target in self.targets:
-                self.signals.completed.emit(
-                    self.run_id, target,
-                    ProbeResult("Probe Error", error=error_text, packet_sent=False),
-                )
+                res = ProbeResult("Probe Error", error=error_text, packet_sent=False)
+                self.signals.completed.emit(self.run_id, target, res)
+                error_batch.append((target, res))
+            self.signals.batch_completed.emit(self.run_id, error_batch)
         return True
 
     def run(self):
         try:
             asyncio.run(self._run())
         except Exception as error:
+            error_batch = []
             for target in self.targets:
+                res = ProbeResult("Probe Error", error=str(error), packet_sent=False)
                 self.signals.completed.emit(
                     self.run_id,
                     target,
-                    ProbeResult("Probe Error", error=str(error), packet_sent=False),
+                    res,
                 )
+                error_batch.append((target, res))
+            self.signals.batch_completed.emit(self.run_id, error_batch)
         finally:
             self.signals.finished.emit(self.run_id)

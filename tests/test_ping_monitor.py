@@ -314,7 +314,8 @@ class PingMonitorAppTests(unittest.TestCase):
         self.window.refresh_dashboard()
         self.assertIn("DNS/probe issue", self.window.down_summary_label.text())
         self.assertNotIn("awaiting first result", self.window.down_summary_label.text())
-        self.assertEqual(self.window.host_count_label.text(), "0 up / 1 total")
+        self.assertEqual(self.window.host_count_label.text(), "0 up / 0 monitored")
+        self.assertEqual(self.window.table.rowCount(), 0)
 
     def test_no_reply_count_matches_sorted_table_and_other_issue_counts(self):
         def host_data(status, received=0):
@@ -340,7 +341,7 @@ class PingMonitorAppTests(unittest.TestCase):
         self.assertEqual(self.window.down_table.rowCount(), 2)
         self.assertIn("2 of 4 down", self.window.down_summary_label.text())
         self.assertIn("1 DNS/probe issue", self.window.down_summary_label.text())
-        self.assertEqual(self.window.host_count_label.text(), "1 up / 4 total")
+        self.assertEqual(self.window.host_count_label.text(), "1 up / 3 monitored")
         displayed = {
             self.window.down_table.item(row, 0).text(): self.window.down_table.item(row, 1).text()
             for row in range(self.window.down_table.rowCount())
@@ -353,8 +354,264 @@ class PingMonitorAppTests(unittest.TestCase):
 
         self.assertEqual(self.window.down_table.rowCount(), 1)
         self.assertIn("1 of 4 down", self.window.down_summary_label.text())
-        self.assertEqual(self.window.host_count_label.text(), "2 up / 4 total")
+        self.assertEqual(self.window.host_count_label.text(), "2 up / 3 monitored")
+
+    def test_handle_probe_batch_updates_table_and_host_data(self):
+        self.window._run_id = 99
+        self.window.is_monitoring = True
+        self.window.host_data = {
+            "node1.example": {
+                "sent": 0, "received": 0, "checks": 0,
+                "latencies": deque(maxlen=60), "latency_count": 0,
+                "latency_sum": 0.0, "min_latency": None, "max_latency": None,
+                "timeline_stats": [], "log_rows": [], "last_status": None,
+                "last_error": None, "consecutive_fails": 0,
+                "last_down_time": "-",
+            },
+            "node2.example": {
+                "sent": 0, "received": 0, "checks": 0,
+                "latencies": deque(maxlen=60), "latency_count": 0,
+                "latency_sum": 0.0, "min_latency": None, "max_latency": None,
+                "timeline_stats": [], "log_rows": [], "last_status": None,
+                "last_error": None, "consecutive_fails": 0,
+                "last_down_time": "-",
+            },
+        }
+        self.window.table.setRowCount(2)
+        for r, host in enumerate(["node1.example", "node2.example"]):
+            item = QTableWidgetItem(host)
+            self.window.table.setItem(r, 0, item)
+            self.window._host_items[host] = item
+
+        batch = [
+            ("node1.example", ProbeResult("Connected", 15.5)),
+            ("node2.example", ProbeResult("No ICMP Reply")),
+        ]
+        self.window._handle_probe_batch(99, batch)
+
+        self.assertEqual(self.window.host_data["node1.example"]["received"], 1)
+        self.assertEqual(self.window.host_data["node2.example"]["consecutive_fails"], 1)
+        self.assertEqual(self.window.table.item(0, 1).text(), "Connected")
+        self.assertEqual(self.window.table.item(1, 1).text(), "No ICMP Reply")
+
+    def test_handle_probe_batch_removes_dns_error_host_from_table(self):
+        self.window._run_id = 101
+        self.window.is_monitoring = True
+        self.window.host_data = {
+            "node1.example": {
+                "sent": 0, "received": 0, "checks": 0,
+                "latencies": deque(maxlen=60), "latency_count": 0,
+                "latency_sum": 0.0, "min_latency": None, "max_latency": None,
+                "timeline_stats": [], "log_rows": [], "last_status": None,
+                "last_error": None, "consecutive_fails": 0,
+                "last_down_time": "-",
+            },
+            "node2_bad.example": {
+                "sent": 0, "received": 0, "checks": 0,
+                "latencies": deque(maxlen=60), "latency_count": 0,
+                "latency_sum": 0.0, "min_latency": None, "max_latency": None,
+                "timeline_stats": [], "log_rows": [], "last_status": None,
+                "last_error": None, "consecutive_fails": 0,
+                "last_down_time": "-",
+            },
+            "node3.example": {
+                "sent": 0, "received": 0, "checks": 0,
+                "latencies": deque(maxlen=60), "latency_count": 0,
+                "latency_sum": 0.0, "min_latency": None, "max_latency": None,
+                "timeline_stats": [], "log_rows": [], "last_status": None,
+                "last_error": None, "consecutive_fails": 0,
+                "last_down_time": "-",
+            },
+        }
+        self.window.table.setRowCount(3)
+        for r, host in enumerate(["node1.example", "node2_bad.example", "node3.example"]):
+            item = QTableWidgetItem(host)
+            self.window.table.setItem(r, 0, item)
+            self.window._host_items[host] = item
+
+        batch = [
+            ("node1.example", ProbeResult("Connected", 12.0)),
+            ("node2_bad.example", ProbeResult("DNS Error", error="Domain unresolved", packet_sent=False)),
+            ("node3.example", ProbeResult("Connected", 18.0)),
+        ]
+        self.window._handle_probe_batch(101, batch)
+
+        # The DNS Error host must be removed from the table immediately
+        self.assertEqual(self.window.table.rowCount(), 2)
+        remaining = [self.window.table.item(r, 0).text() for r in range(self.window.table.rowCount())]
+        self.assertIn("node1.example", remaining)
+        self.assertIn("node3.example", remaining)
+        self.assertNotIn("node2_bad.example", remaining)
+        self.assertNotIn("node2_bad.example", self.window._host_items)
+
+        # But data must be retained in host_data for the DNS inspector
+        self.assertEqual(self.window.host_data["node2_bad.example"]["last_status"], "DNS Error")
+
+    def test_chart_excludes_dns_error_hosts_and_updates_dns_pill(self):
+        self.window.host_data = {
+            "good1.example": {
+                "sent": 1, "received": 1, "checks": 1,
+                "latencies": deque([12.5], maxlen=60), "latency_count": 1,
+                "latency_sum": 12.5, "min_latency": 12.5, "max_latency": 12.5,
+                "timeline_stats": [], "log_rows": [], "last_status": "Connected",
+                "last_error": None, "consecutive_fails": 0, "last_down_time": "-",
+            },
+            "good2.example": {
+                "sent": 1, "received": 0, "checks": 1,
+                "latencies": deque([0], maxlen=60), "latency_count": 0,
+                "latency_sum": 0.0, "min_latency": None, "max_latency": None,
+                "timeline_stats": [], "log_rows": [], "last_status": "No ICMP Reply",
+                "last_error": None, "consecutive_fails": 1, "last_down_time": "-",
+            },
+            "dns_bad1.example": {
+                "sent": 0, "received": 0, "checks": 1,
+                "latencies": deque([], maxlen=60), "latency_count": 0,
+                "latency_sum": 0.0, "min_latency": None, "max_latency": None,
+                "timeline_stats": [], "log_rows": [], "last_status": "DNS Error",
+                "last_error": "Domain not found", "consecutive_fails": 1, "last_down_time": "-",
+            },
+            "dns_bad2.example": {
+                "sent": 0, "received": 0, "checks": 1,
+                "latencies": deque([], maxlen=60), "latency_count": 0,
+                "latency_sum": 0.0, "min_latency": None, "max_latency": None,
+                "timeline_stats": [], "log_rows": [], "last_status": "DNS Error",
+                "last_error": "Name or service not known", "consecutive_fails": 1, "last_down_time": "-",
+            },
+        }
+        self.window.table.setRowCount(4)
+        for r, host in enumerate(["good1.example", "good2.example", "dns_bad1.example", "dns_bad2.example"]):
+            item = QTableWidgetItem(host)
+            self.window.table.setItem(r, 0, item)
+            self.window._host_items[host] = item
+
+        self.window.refresh_dashboard()
+
+        # Telemetry chart must only contain valid pingable (Connected) and timeout (No ICMP Reply) hosts
+        self.assertIn("good1.example", self.window.chart.history)
+        self.assertIn("good2.example", self.window.chart.history)
+        self.assertNotIn("dns_bad1.example", self.window.chart.history)
+        self.assertNotIn("dns_bad2.example", self.window.chart.history)
+
+        # DNS Error hosts must be removed from the Live Telemetry table
+        self.assertEqual(self.window.table.rowCount(), 2)
+        table_hosts = [
+            self.window.table.item(r, 0).text() for r in range(self.window.table.rowCount())
+        ]
+        self.assertIn("good1.example", table_hosts)
+        self.assertIn("good2.example", table_hosts)
+        self.assertNotIn("dns_bad1.example", table_hosts)
+        self.assertNotIn("dns_bad2.example", table_hosts)
+        self.assertEqual(self.window.host_count_label.text(), "1 up / 2 monitored")
+
+        # Toolbar DNS pill badge must reflect the 2 DNS failures
+        self.assertEqual(self.window.dns_issues_btn.text(), "⚠ 2 DNS Issues")
+
+        # Clearing history resets the pill
+        self.window._confirm = lambda *args: True
+        self.window.clear_history()
+        self.assertEqual(self.window.dns_issues_btn.text(), "0 DNS Issues")
+
+    def test_dns_issues_dialog_table_filtering_and_copy(self):
+        issues = [
+            ("unresolved1.example", {"last_error": "No address found", "last_down_time": "2026-10-18 10:00:00"}),
+            ("unresolved2.example", {"last_error": "Server failure", "last_down_time": "2026-10-18 10:01:00"}),
+        ]
+        dialog = ping_monitor.DNSIssuesDialog(issues, dark=True)
+        self.assertEqual(dialog.table.rowCount(), 2)
+        self.assertEqual(dialog.table.item(0, 0).text(), "unresolved1.example")
+        self.assertEqual(dialog.table.item(1, 0).text(), "unresolved2.example")
+
+        # Test search filter
+        dialog._filter_table("unresolved1")
+        self.assertFalse(dialog.table.isRowHidden(0))
+        self.assertTrue(dialog.table.isRowHidden(1))
+        self.assertIn("Showing 1 of 2", dialog.counter_label.text())
+
+        dialog._filter_table("")
+        self.assertFalse(dialog.table.isRowHidden(0))
+        self.assertFalse(dialog.table.isRowHidden(1))
+        self.assertEqual(dialog.counter_label.text(), "Total: 2 hosts")
+
+        # Test clipboard copy
+        dialog.copy_hostnames()
+        clipboard_text = QApplication.clipboard().text()
+        self.assertIn("unresolved1.example", clipboard_text)
+        self.assertIn("unresolved2.example", clipboard_text)
+        self.assertIn("Copied 2 hostnames", dialog.feedback_label.text())
+
+    def test_packet_loss_sorting_and_row_integrity(self):
+        hosts = [f"node_{i}.net" for i in range(1, 21)]
+        self.window.hosts = hosts
+        self.window.host_entry.setText(", ".join(hosts))
+        self.window.is_monitoring = True
+        self.window._run_id = 42
+
+        for i, host in enumerate(hosts):
+            self.window.host_data[host] = {
+                "sent": 10, "received": 10 - (i % 5) * 2, "checks": 10,
+                "latencies": deque([15.0 + i], maxlen=60), "latency_count": 1, "latency_sum": 15.0 + i,
+                "min_latency": 15.0 + i, "max_latency": 15.0 + i,
+                "consecutive_fails": (i % 5), "last_status": "Connected",
+                "last_error": None, "last_down_time": "-",
+                "timeline_stats": [], "log_rows": [],
+            }
+            row = self.window.table.rowCount()
+            self.window.table.insertRow(row)
+            loss_pct = ((10 - self.window.host_data[host]["received"]) / 10) * 100
+            vals = [host, "Connected", "10", f"{15.0+i:.1f} ms", f"{loss_pct:.1f}%", str(i % 5)]
+            sort_vals = {2: 10, 3: 15.0 + i, 4: loss_pct, 5: i % 5}
+            for col, val in enumerate(vals):
+                it = ping_monitor.SortableTableWidgetItem(val, numeric=col in (2, 3, 4, 5), sort_value=sort_vals.get(col))
+                self.window.table.setItem(row, col, it)
+                if col == 0:
+                    self.window._host_items[host] = it
+
+        # Click Packet Loss header (col 4) - should default to Descending (highest loss first)
+        self.window.on_table_header_clicked(4)
+        self.application.processEvents()
+
+        # Check top row has highest loss
+        top_loss_item = self.window.table.item(0, 4)
+        top_loss_val = top_loss_item.data(Qt.UserRole)
+        self.assertEqual(top_loss_val, 80.0)
+
+        # Send an update for node_1.net while sort is active
+        # node_1 currently has loss 0%. Update it to No ICMP Reply
+        self.window._handle_probe_result(42, "node_1.net", ProbeResult("No ICMP Reply", None))
+        self.application.processEvents()
+
+        # Row integrity: col 0 must match host_items lookup
+        for host in hosts:
+            it = self.window._host_items[host]
+            row_idx = it.row()
+            cell_host = self.window.table.item(row_idx, 0).text()
+            self.assertEqual(cell_host, host)
+
+        # Trigger dashboard refresh (which does periodic sort)
+        self.window.refresh_dashboard()
+        self.application.processEvents()
+
+        # node_1.net now has loss, ensure it remains matched with its row
+        it_1 = self.window._host_items["node_1.net"]
+        row_1 = it_1.row()
+        self.assertEqual(self.window.table.item(row_1, 0).text(), "node_1.net")
+
+    def test_csv_sanitization_dde_attacks(self):
+        # Formula injection strings must be prefixed with single quote
+        self.assertEqual(ping_monitor._sanitize_csv_cell("=cmd|'/C calc'!A0"), "'=cmd|'/C calc'!A0")
+        self.assertEqual(ping_monitor._sanitize_csv_cell("+cmd|'/C calc'!A0"), "'+cmd|'/C calc'!A0")
+        self.assertEqual(ping_monitor._sanitize_csv_cell("-cmd|'/C calc'!A0"), "'-cmd|'/C calc'!A0")
+        self.assertEqual(ping_monitor._sanitize_csv_cell("@SUM(A1:A10)"), "'@SUM(A1:A10)")
+        self.assertEqual(ping_monitor._sanitize_csv_cell("\tmalicious"), "'\tmalicious")
+        # Regular numeric values must remain unchanged
+        self.assertEqual(ping_monitor._sanitize_csv_cell(12.5), 12.5)
+        self.assertEqual(ping_monitor._sanitize_csv_cell("-5.2"), "-5.2")
+        self.assertEqual(ping_monitor._sanitize_csv_cell("+10"), "+10")
+        self.assertEqual(ping_monitor._sanitize_csv_cell("8.8.8.8"), "8.8.8.8")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+

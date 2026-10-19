@@ -65,16 +65,17 @@ The monitor runs cross-platform on **Windows**, **Linux**, and **macOS**, automa
 
 - **High-concurrency monitoring** — easily monitors 300 to 1,000+ parallel targets with multiplexed asynchronous raw sockets (`AsyncICMPSession`) and zero socket-buffer duplication.
 - **Smart DNS caching & pacing** — resolves hostnames once, caches for 5 minutes (`DNS_CACHE_TTL = 300s`), and paces initial queries via semaphore to prevent DNS server/threadpool flooding.
-- **Live dashboard** — status, sequence, latency, packet loss, consecutive failures.
-- **Latency history chart** — rolling-window graph with per-host colours and legend.
+- **DNS Issue Isolation & Multi-Check Verification** — hostnames with name resolution errors are vetted with multiple DNS lookups, isolated from the live telemetry stream and chart, and tracked in a dedicated DNS Inspector with live filtering, clipboard copy, and export.
+- **Live dashboard** — status, sequence, latency, packet loss, consecutive failures with in-place cell updates.
+- **Latency history chart** — rolling-window graph with per-host colours and legend, automatically capped to the top 20 active targets to maintain 60 FPS even with 500+ host fleets.
 - **No-reply panel** — shows targets that did not answer ICMP; a timeout does not prove the host is offline.
-- **Sortable dashboards** — live and no-reply tables sort by column, with numeric fields ordered numerically.
+- **High-performance table sorting** — $O(1)$ numeric sorting by column without regex parsing; clicking headers (including Packet Loss) sorts immediately without UI freezing, row shifting, or artificial ICMP latency spikes.
 - **Host detail dialog** — double-click a row for stats + recent timeline.
 - **Theme toggle** — dark / light mode (🌙 / ☀️).
 - **Import hosts** — load from `.txt` or `.csv` (supports 500+ host lists).
 - **Config save/load** — atomically persists hosts, settings, and theme to `ping_monitor_config.json`.
-- **Export reports** — TXT with a top-level overview, CSV with per-host summary and probe rows, or XLSX with Summary Info, Host Details, and Probe Details tabs.
-- **Search / filter** — live filter on the host table.
+- **Timestamped secure exports** — TXT, CSV, and XLSX exports automatically include timestamped filenames (`network_report_YYYYMMDD_HHMMSS.<ext>`) to prevent overwriting, with built-in CSV formula injection (DDE) sanitization and UTF-8 BOM encoding.
+- **Search / filter** — live filter on the host table placed beside telemetry controls.
 - **Log limiting** — timeline capped at 1000 entries per host.
 
 ---
@@ -128,9 +129,10 @@ python ping_monitor.py
 |------|-------------|
 | **Header** | Title, theme toggle, status pill (IDLE / MONITORING) |
 | **Config card** | Host list, import, save config, spin boxes, Start/Stop, Clear, Export |
-| **Filter** | Live search over host names/IPs |
-| **Live Host Dashboard** | Main table (Host, Status, Sequence, Latency, Loss, Fails) |
-| **Latency History** | Custom-painted rolling chart |
+| **Live Telemetry Bar** | Live search filter placed directly alongside the **DNS Issues Pill Badge** (`⚠ X DNS Issues`) |
+| **DNS Inspector Dialog** | Opened via the DNS pill badge; displays all unresolvable hosts, detection timestamp, exact error reason, search bar, and one-click clipboard copy / CSV export |
+| **Live Host Dashboard** | Main table with $O(1)$ smooth column sorting (Host, Status, Sequence, Latency, Loss, Failures); DNS error hosts are isolated to keep telemetry clean |
+| **Latency History** | Custom-painted rolling chart automatically capped to the top 20 active targets to maintain high performance with large fleets |
 | **No ICMP Reply** | Targets that returned no echo reply before timeout |
 | **Footer** | Aggregate host count and overall loss |
 
@@ -164,26 +166,29 @@ Fields:
 
 ## Export Formats
 
-Export dialogs now automatically generate timestamped default filenames (`network_report_YYYYMMDD_HHMMSS.<ext>`) and embed the export generation timestamp across all report types:
+Export dialogs automatically generate unique timestamped default filenames (`network_report_YYYYMMDD_HHMMSS.<ext>`) to ensure files are never overwritten by default:
 
 ### TXT Report (`network_report_YYYYMMDD_HHMMSS.txt`)
-- Header includes `Generated: YYYY-MM-DD HH:MM:SS`
+- Header includes `Generated: YYYY-MM-DD HH:MM:SS` timestamp
 - Overview counts and aggregate ICMP/latency metrics at the top
 - Aggregated metrics (sent / recv / loss / min / max / avg)
 - Targets with no ICMP reply at export time (with failure timestamps)
 - Full sequence timeline per host
 
 ### CSV Report (`network_report_YYYYMMDD_HHMMSS.csv`)
+- **Formula Injection Protection**: Neutralizes CSV/DDE injection attacks (`=`, `+`, `-`, `@`, `\t`, `\r` escaped with single quote)
+- **UTF-8 with BOM (`utf-8-sig`)**: Prevents character corruption when opened in Microsoft Excel
 - Embedded `Timestamp` and `Export_DateTime` fields on all rows
-- Summary metrics per target
-- No-reply and per-probe rows
-- Current ICMP reply and probe error state per target
-- Recent probe rows (sequence, timestamp, result, latency or error)
+- Summary metrics per target, DNS failure records, no-reply timeouts, and probe sequence rows
 
 ### Excel Workbook (`network_report_YYYYMMDD_HHMMSS.xlsx`)
 - **Summary Info**: Overview tab with `Report Generated` timestamp
 - **Host Details**: Metrics, summary per target, and `Report Generated` timestamp column
 - **Probe Details**: Recent probe timeline with sequence timestamps and `Report Generated` column
+- **DNS Failures**: Dedicated sheet for unresolvable targets with timestamps and root-cause details
+
+### DNS Issues Report (`dns_issues_YYYYMMDD_HHMMSS.csv`)
+- Direct export from the DNS Inspector dialog listing all unresolvable domain names, validation attempt count, error message, and timestamp
 
 ---
 

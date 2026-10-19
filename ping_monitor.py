@@ -16,7 +16,7 @@ from collections import deque
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Slot, QTimer, QPointF, QRectF, QThreadPool
-from PySide6.QtGui import QColor, QPainter, QPen, QFont
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QGridLayout, QSplitter, QFileDialog, QAbstractItemView, QHeaderView,
@@ -26,35 +26,82 @@ from PySide6.QtWidgets import (
 from probes import MAX_CONCURRENT_PROBES, ProbeResult, ProbeTask, normalize_targets
 
 
-class SortableTableWidgetItem(QTableWidgetItem):
-    """Sort numbers by value while preserving normal text sorting."""
+_NUMERIC_RE = re.compile(r"[^0-9.+-]")
 
-    def __init__(self, text, numeric=False):
+
+def _sanitize_csv_cell(value: object) -> object:
+    """Neutralize spreadsheet formula injection (DDE attacks) for exported CSVs."""
+    if value is None:
+        return ""
+    text = str(value)
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+        try:
+            float(text)
+            return value
+        except ValueError:
+            return "'" + text
+    return value
+
+
+class SortableTableWidgetItem(QTableWidgetItem):
+    """Sort numbers by value using direct numeric data while preserving text sorting."""
+
+    def __init__(self, text: str, numeric: bool = False, sort_value: float | None = None):
         super().__init__(text)
         self.numeric = numeric
+        if sort_value is not None:
+            self.setData(Qt.UserRole, sort_value)
+        elif numeric:
+            clean = _NUMERIC_RE.sub("", text)
+            try:
+                self.setData(Qt.UserRole, float(clean))
+            except (ValueError, TypeError):
+                self.setData(Qt.UserRole, float("inf") if text in ("—", "-", "n/a") else 0.0)
 
-    def __lt__(self, other):
+    def set_value(self, text: str, sort_value: float | None = None):
+        if self.text() != text:
+            self.setText(text)
+        if sort_value is not None:
+            self.setData(Qt.UserRole, sort_value)
+        elif self.numeric:
+            clean = _NUMERIC_RE.sub("", text)
+            try:
+                self.setData(Qt.UserRole, float(clean))
+            except (ValueError, TypeError):
+                self.setData(Qt.UserRole, float("inf") if text in ("—", "-", "n/a") else 0.0)
+
+    def __lt__(self, other: object) -> bool:
         if self.numeric and getattr(other, "numeric", False):
-            left = re.sub(r"[^0-9.+-]", "", self.text())
-            right = re.sub(r"[^0-9.+-]", "", other.text())
+            v_self = self.data(Qt.UserRole)
+            v_other = getattr(other, "data", lambda r: None)(Qt.UserRole)
+            if v_self is not None and v_other is not None:
+                try:
+                    return float(v_self) < float(v_other)
+                except (ValueError, TypeError):
+                    pass
+            # Fallback if UserRole not set
+            s_text = self.text()
+            o_text = getattr(other, "text", lambda: "")()
+            left = _NUMERIC_RE.sub("", s_text)
+            right = _NUMERIC_RE.sub("", o_text)
             try:
                 return float(left) < float(right)
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
-        return self.text().casefold() < other.text().casefold()
+        return self.text().casefold() < str(getattr(other, "text", lambda: "")()).casefold()
 
 
 # ---------------------------------------------------------------------------
 # Host Detail Dialog
 # ---------------------------------------------------------------------------
 class HostDetailDialog(QDialog):
-    def __init__(self, host, data, dark=True, parent=None):
+    def __init__(self, host: str, data: dict, dark: bool = True, parent: QWidget | None = None):
         super().__init__(parent)
         self.host = host
         self.data = data
         self._dark = dark
-        self.setWindowTitle(f"Host Inspection — {host}")
-        self.resize(640, 540)
+        self.setWindowTitle(f"Host Telemetry — {host}")
+        self.resize(660, 560)
         self._build_ui()
         self._apply_style()
 
@@ -96,12 +143,19 @@ class HostDetailDialog(QDialog):
         layout.addLayout(stats_layout)
 
         status = self.data.get("last_status", "Unknown")
-        status_color = "#3fb950" if status == "Connected" else "#f85149"
+        dark = self._dark
+        if status == "Connected":
+            status_color = "#10b981" if dark else "#059669"
+        elif status == "No ICMP Reply":
+            status_color = "#f59e0b" if dark else "#d97706"
+        else:
+            status_color = "#f43f5e" if dark else "#e11d48"
+
         status_row = QHBoxLayout()
         status_label = QLabel("Current Status:")
         status_label.setObjectName("mutedLabel")
         status_value = QLabel(status)
-        status_value.setStyleSheet(f"color: {status_color}; font-weight: 600;")
+        status_value.setStyleSheet(f"color: {status_color}; font-weight: 700;")
         status_row.addWidget(status_label)
         status_row.addWidget(status_value)
         status_row.addStretch()
@@ -135,29 +189,32 @@ class HostDetailDialog(QDialog):
 
     def _apply_style(self):
         dark = self._dark
-        bg = "#0d1117" if dark else "#ffffff"
-        text = "#e6edf3" if dark else "#1f2328"
-        muted = "#848d97" if dark else "#656d76"
-        input_bg = "#161b22" if dark else "#f6f8fa"
-        border = "#30363d" if dark else "#d0d7de"
+        bg = "#090d16" if dark else "#f8fafc"
+        text = "#f1f5f9" if dark else "#0f172a"
+        muted = "#94a3b8" if dark else "#64748b"
+        input_bg = "#0b101c" if dark else "#ffffff"
+        border = "#1c2438" if dark else "#e2e8f0"
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {bg};
                 color: {text};
+                font-family: "Segoe UI", Arial, sans-serif;
             }}
             QLabel#detailTitle {{
                 font-size: 16px;
-                font-weight: 600;
+                font-weight: 700;
                 color: {text};
                 background: transparent;
             }}
             QLabel#mutedLabel {{
                 color: {muted};
+                font-size: 12px;
                 background: transparent;
             }}
             QLabel#strongLabel {{
                 color: {text};
                 font-weight: 600;
+                font-size: 13px;
                 background: transparent;
             }}
             QTextEdit {{
@@ -165,20 +222,406 @@ class HostDetailDialog(QDialog):
                 color: {text};
                 border: 1px solid {border};
                 border-radius: 6px;
-                padding: 8px;
-                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                padding: 10px;
+                font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
                 font-size: 11px;
             }}
             QPushButton#secondaryBtn {{
-                background-color: {"#21262d" if dark else "#f6f8fa"};
+                background-color: {"#151c2b" if dark else "#ffffff"};
                 color: {text};
                 border: 1px solid {border};
                 border-radius: 6px;
                 font-weight: 500;
+                padding: 6px 16px;
+            }}
+            QPushButton#secondaryBtn:hover {{
+                background-color: {"#1e273a" if dark else "#f1f5f9"};
+            }}
+        """)
+
+
+# ---------------------------------------------------------------------------
+# DNS Issues Dialog
+# ---------------------------------------------------------------------------
+class DNSIssuesDialog(QDialog):
+    """Inspector modal for hostnames that failed DNS resolution and were retired from probing."""
+
+    def __init__(
+        self,
+        dns_issues: list[tuple[str, dict]],
+        dark: bool = True,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.dns_issues = list(dns_issues)
+        self._dark = dark
+        self.setWindowTitle("DNS Resolution Issues")
+        self.resize(760, 480)
+        self.setMinimumSize(600, 360)
+        self._build_ui()
+        self._apply_style()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        # Header section
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+
+        badge = QLabel("DNS FAILURES")
+        badge.setObjectName("badgeLabel")
+        header_row.addWidget(badge)
+
+        title = QLabel("Unresolved Hostnames")
+        title.setObjectName("dnsDialogTitle")
+        header_row.addWidget(title)
+        header_row.addStretch()
+
+        self.counter_label = QLabel(
+            f"Total: {len(self.dns_issues)} host{'s' if len(self.dns_issues) != 1 else ''}"
+        )
+        self.counter_label.setObjectName("counterLabel")
+        header_row.addWidget(self.counter_label)
+        layout.addLayout(header_row)
+
+        desc = QLabel(
+            "The following target hostnames could not be resolved to an IP address. "
+            "To conserve resources and avoid high-frequency lookup thrashing, they have been "
+            "retired from the active probing queue and excluded from the Live Telemetry Chart."
+        )
+        desc.setWordWrap(True)
+        desc.setObjectName("dnsDialogSubtitle")
+        layout.addWidget(desc)
+
+        # Search / filter toolbar
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        filter_lbl = QLabel("Filter:")
+        filter_lbl.setObjectName("mutedLabel")
+        search_row.addWidget(filter_lbl)
+
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Filter hostnames or error messages...")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self._filter_table)
+        search_row.addWidget(self.search_box)
+        layout.addLayout(search_row)
+
+        # Issues Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels([
+            "Target Hostname",
+            "Status",
+            "Error Details",
+            "Detected At",
+        ])
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(True)
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 200)
+        self.table.setColumnWidth(3, 150)
+
+        self._populate_table()
+        layout.addWidget(self.table, 1)
+
+        # Footer Actions
+        footer = QHBoxLayout()
+        footer.setSpacing(10)
+
+        self.feedback_label = QLabel("")
+        self.feedback_label.setObjectName("feedbackLabel")
+        footer.addWidget(self.feedback_label)
+        footer.addStretch()
+
+        self.copy_btn = QPushButton("Copy Hostnames")
+        self.copy_btn.setObjectName("secondaryBtn")
+        self.copy_btn.setToolTip("Copy hostnames to clipboard (selected or all filtered)")
+        self.copy_btn.clicked.connect(self.copy_hostnames)
+        footer.addWidget(self.copy_btn)
+
+        self.export_btn = QPushButton("Export List...")
+        self.export_btn.setObjectName("secondaryBtn")
+        self.export_btn.setToolTip("Save unresolved hostnames report to CSV or TXT")
+        self.export_btn.clicked.connect(self.export_issues)
+        footer.addWidget(self.export_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("primaryActionBtn")
+        close_btn.clicked.connect(self.accept)
+        close_btn.setDefault(True)
+        footer.addWidget(close_btn)
+
+        layout.addLayout(footer)
+
+    def _populate_table(self):
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(0)
+        dark = self._dark
+        text_color = QColor("#f1f5f9" if dark else "#0f172a")
+        mono_font = QFont("Consolas", 10)
+        mono_font.setStyleHint(QFont.Monospace)
+
+        for host, data in self.dns_issues:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+            err_text = data.get("last_error") or "Name lookup failed"
+            timestamp = data.get("last_down_time")
+            if not timestamp or timestamp == "-":
+                log_rows = data.get("log_rows")
+                if log_rows:
+                    timestamp = log_rows[-1][1]
+                else:
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+            col_host = SortableTableWidgetItem(host)
+            col_host.setForeground(text_color)
+            col_host.setFont(mono_font)
+            col_host.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.table.setItem(row, 0, col_host)
+
+            col_status = SortableTableWidgetItem("DNS Error")
+            col_status.setForeground(QColor("#fbbf24" if dark else "#b45309"))
+            col_status.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 1, col_status)
+
+            col_err = SortableTableWidgetItem(err_text)
+            col_err.setForeground(QColor("#94a3b8" if dark else "#64748b"))
+            col_err.setToolTip(err_text)
+            col_err.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.table.setItem(row, 2, col_err)
+
+            col_time = SortableTableWidgetItem(str(timestamp))
+            col_time.setForeground(text_color)
+            col_time.setFont(mono_font)
+            col_time.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 3, col_time)
+
+        self.table.setSortingEnabled(True)
+
+    def _filter_table(self, query: str):
+        query = query.strip().lower()
+        visible_count = 0
+        for row in range(self.table.rowCount()):
+            host_item = self.table.item(row, 0)
+            err_item = self.table.item(row, 2)
+            matches = True
+            if query:
+                host_str = host_item.text().lower() if host_item else ""
+                err_str = err_item.text().lower() if err_item else ""
+                matches = query in host_str or query in err_str
+            self.table.setRowHidden(row, not matches)
+            if matches:
+                visible_count += 1
+        total = len(self.dns_issues)
+        if query:
+            self.counter_label.setText(f"Showing {visible_count} of {total} failed hosts")
+        else:
+            self.counter_label.setText(f"Total: {total} host{'s' if total != 1 else ''}")
+
+    def copy_hostnames(self):
+        selected_indexes = self.table.selectionModel().selectedRows()
+        if selected_indexes:
+            hosts = [
+                self.table.item(idx.row(), 0).text()
+                for idx in selected_indexes
+                if self.table.item(idx.row(), 0)
+            ]
+            desc = f"{len(hosts)} selected hostname{'s' if len(hosts) != 1 else ''}"
+        else:
+            hosts = []
+            for row in range(self.table.rowCount()):
+                if not self.table.isRowHidden(row):
+                    item = self.table.item(row, 0)
+                    if item:
+                        hosts.append(item.text())
+            desc = f"{len(hosts)} hostname{'s' if len(hosts) != 1 else ''}"
+
+        if not hosts:
+            self.feedback_label.setText("No hostnames to copy.")
+            self.feedback_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+            return
+
+        text = "\n".join(hosts)
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+            self.feedback_label.setText(f"✓ Copied {desc} to clipboard")
+            self.feedback_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 11px;")
+            QTimer.singleShot(4000, lambda: self.feedback_label.setText(""))
+
+    def export_issues(self):
+        if not self.dns_issues:
+            QMessageBox.information(self, "Export", "No DNS issues to export.")
+            return
+        default_name = f"dns_issues_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+        path, sel_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export DNS Issues",
+            default_name,
+            "CSV Files (*.csv);;Text Files (*.txt);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            is_csv = path.lower().endswith(".csv") or "CSV" in sel_filter
+            with open(path, "w", newline="", encoding="utf-8-sig" if is_csv else "utf-8") as f:
+                if is_csv:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        "Target Hostname",
+                        "Status",
+                        "Error Details",
+                        "Detected Timestamp",
+                    ])
+                    for row in range(self.table.rowCount()):
+                        if not self.table.isRowHidden(row):
+                            writer.writerow([
+                                _sanitize_csv_cell(self.table.item(row, 0).text() if self.table.item(row, 0) else ""),
+                                _sanitize_csv_cell(self.table.item(row, 1).text() if self.table.item(row, 1) else ""),
+                                _sanitize_csv_cell(self.table.item(row, 2).text() if self.table.item(row, 2) else ""),
+                                _sanitize_csv_cell(self.table.item(row, 3).text() if self.table.item(row, 3) else ""),
+                            ])
+                else:
+                    f.write(
+                        f"# DNS Resolution Failures Report - {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    )
+                    f.write(
+                        f"# Total targets retired from probing: {len(self.dns_issues)}\n\n"
+                    )
+                    for row in range(self.table.rowCount()):
+                        if not self.table.isRowHidden(row):
+                            host = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
+                            err = self.table.item(row, 2).text() if self.table.item(row, 2) else ""
+                            ts = self.table.item(row, 3).text() if self.table.item(row, 3) else ""
+                            f.write(f"{host:<30} | {err:<40} | {ts}\n")
+            self.feedback_label.setText(f"✓ Exported to {Path(path).name}")
+            self.feedback_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 11px;")
+            QTimer.singleShot(4000, lambda: self.feedback_label.setText(""))
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Failed to export DNS issues:\n{exc}")
+
+    def _apply_style(self):
+        dark = self._dark
+        bg = "#090d16" if dark else "#f8fafc"
+        text = "#f1f5f9" if dark else "#0f172a"
+        muted = "#94a3b8" if dark else "#64748b"
+        border = "#1c2438" if dark else "#e2e8f0"
+        header_bg = "#151c2b" if dark else "#f1f5f9"
+        row_alt = "#0d1322" if dark else "#f8fafc"
+        row_sel = "#1e293b" if dark else "#e2e8f0"
+        input_bg = "#0b101c" if dark else "#ffffff"
+        amber = "#fbbf24" if dark else "#b45309"
+        amber_bg = "rgba(245, 158, 11, 0.12)" if dark else "#fef3c7"
+        amber_border = "rgba(245, 158, 11, 0.4)" if dark else "#f59e0b"
+
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {bg};
+                color: {text};
+                font-family: "Segoe UI", Arial, sans-serif;
+            }}
+            QLabel#dnsDialogTitle {{
+                font-size: 16px;
+                font-weight: 700;
+                color: {text};
+                background: transparent;
+            }}
+            QLabel#dnsDialogSubtitle {{
+                color: {muted};
+                font-size: 12px;
+                background: transparent;
+            }}
+            QLabel#counterLabel {{
+                color: {muted};
+                font-size: 12px;
+                font-weight: 600;
+                background: transparent;
+            }}
+            QLabel#mutedLabel {{
+                color: {muted};
+                font-size: 12px;
+                background: transparent;
+            }}
+            QLabel#badgeLabel {{
+                background-color: {amber_bg};
+                color: {amber};
+                border: 1px solid {amber_border};
+                border-radius: 10px;
+                padding: 2px 8px;
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+            }}
+            QLineEdit {{
+                background-color: {input_bg};
+                color: {text};
+                border: 1px solid {border};
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid #3b82f6;
+            }}
+            QTableWidget {{
+                background-color: {input_bg};
+                alternate-background-color: {row_alt};
+                color: {text};
+                gridline-color: {border};
+                border: 1px solid {border};
+                border-radius: 6px;
+                selection-background-color: {row_sel};
+                selection-color: {text};
+                font-size: 12px;
+            }}
+            QHeaderView::section {{
+                background-color: {header_bg};
+                color: {muted};
+                font-weight: 600;
+                font-size: 11px;
+                border: none;
+                border-bottom: 1px solid {border};
+                padding: 6px 8px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }}
+            QPushButton#secondaryBtn {{
+                background-color: {header_bg};
+                color: {text};
+                border: 1px solid {border};
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 12px;
                 padding: 6px 14px;
             }}
             QPushButton#secondaryBtn:hover {{
-                background-color: {"#30363d" if dark else "#edf2f7"};
+                background-color: {"#1e273a" if dark else "#e2e8f0"};
+                border-color: {"#2a3650" if dark else "#cbd5e1"};
+            }}
+            QPushButton#primaryActionBtn {{
+                background-color: #2563eb;
+                color: #ffffff;
+                border: 1px solid #3b82f6;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 12px;
+                padding: 6px 16px;
+            }}
+            QPushButton#primaryActionBtn:hover {{
+                background-color: #1d4ed8;
             }}
         """)
 
@@ -188,16 +631,32 @@ class HostDetailDialog(QDialog):
 # ---------------------------------------------------------------------------
 class LatencyChart(QWidget):
     COLORS_DARK = [
-        "#58a6ff", "#3fb950", "#d29922", "#f85149",
-        "#bc8cff", "#39c5cf", "#db61a2", "#8b949e",
-        "#79c0ff", "#56d364", "#e3b341", "#ff7b72",
-        "#d2a8ff", "#56d4dd", "#ff7bca", "#8b949e",
+        "#38bdf8",  # Electric Cyan
+        "#34d399",  # Emerald Mint
+        "#fbbf24",  # Warm Amber
+        "#f43f5e",  # Precision Crimson
+        "#a78bfa",  # Soft Violet
+        "#2dd4bf",  # Teal
+        "#fb923c",  # Vivid Tangerine
+        "#f472b6",  # Pink
+        "#60a5fa",  # Royal Blue
+        "#4ade80",  # Green
+        "#e879f9",  # Fuchsia
+        "#94a3b8",  # Steel Slate
     ]
     COLORS_LIGHT = [
-        "#0969da", "#1f883d", "#9a6700", "#cf222e",
-        "#8250df", "#1b7c83", "#bf3989", "#57606a",
-        "#0550ae", "#1a7f37", "#845300", "#a40e26",
-        "#6639ba", "#135f65", "#952d75", "#57606a",
+        "#0284c7",  # Deep Sky
+        "#059669",  # Emerald
+        "#d97706",  # Warm Amber
+        "#e11d48",  # Precision Crimson
+        "#7c3aed",  # Violet
+        "#0d9488",  # Teal
+        "#ea580c",  # Vivid Tangerine
+        "#db2777",  # Pink
+        "#2563eb",  # Royal Blue
+        "#16a34a",  # Forest
+        "#c026d3",  # Fuchsia
+        "#475569",  # Steel Slate
     ]
 
     def __init__(self, parent=None):
@@ -230,21 +689,21 @@ class LatencyChart(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         dark = self._dark
-        bg = QColor("#0d1117" if dark else "#ffffff")
-        title_color = QColor("#e6edf3" if dark else "#1f2328")
-        muted = QColor("#848d97" if dark else "#656d76")
-        grid_color = QColor("#21262d" if dark else "#eaeef2")
-        legend_color = QColor("#e6edf3" if dark else "#1f2328")
-        legend_bg = QColor("#161b22" if dark else "#f6f8fa")
+        bg = QColor("#090d16" if dark else "#ffffff")
+        title_color = QColor("#f1f5f9" if dark else "#0f172a")
+        muted = QColor("#64748b" if dark else "#94a3b8")
+        grid_color = QColor("#1c2438" if dark else "#f1f5f9")
+        legend_color = QColor("#f1f5f9" if dark else "#0f172a")
+        legend_bg = QColor("#111726" if dark else "#f8fafc")
         colors = self.COLORS_DARK if dark else self.COLORS_LIGHT
 
         painter.fillRect(self.rect(), bg)
         painter.setPen(title_color)
-        painter.setFont(QFont("Sans Serif", 11, QFont.Bold))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
         painter.drawText(16, 22, "Latency History")
 
         n_hosts = len(self.history)
-        legend_w = 140 if n_hosts else 0
+        legend_w = 144 if n_hosts else 0
         left_axis, top_m, bottom_m, right_gap = 52, 38, 30, 8
         plot = self.rect().adjusted(left_axis, top_m, -(legend_w + right_gap + 4), -bottom_m)
         legend_rect = QRectF(
@@ -256,7 +715,7 @@ class LatencyChart(QWidget):
 
         if not self.history:
             painter.setPen(muted)
-            painter.setFont(QFont("Sans Serif", 10))
+            painter.setFont(QFont("Segoe UI", 10))
             painter.drawText(plot, Qt.AlignCenter, "Waiting for ICMP telemetry samples...")
             return
 
@@ -270,7 +729,7 @@ class LatencyChart(QWidget):
             painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
             val = max_latency * (4 - i) / 4
             painter.setPen(muted)
-            painter.setFont(QFont("Sans Serif", 8))
+            painter.setFont(QFont("Consolas", 8))
             painter.drawText(
                 QRectF(2, y - 8, left_axis - 6, 16),
                 Qt.AlignRight | Qt.AlignVCenter,
@@ -288,6 +747,8 @@ class LatencyChart(QWidget):
                 continue
             pen = QPen(QColor(colors[idx % len(colors)]))
             pen.setWidth(2)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
             painter.setPen(pen)
             points = []
             n = len(values)
@@ -301,24 +762,23 @@ class LatencyChart(QWidget):
 
         painter.fillRect(legend_rect, legend_bg)
         painter.setPen(QPen(grid_color))
-        painter.drawRect(legend_rect)
+        painter.drawRoundedRect(legend_rect, 6, 6)
 
-        row_h = 16
+        row_h = 18
         max_rows = max(1, int(legend_rect.height() // row_h) - 1)
         items = list(self.history.items())
         shown = items[:max_rows]
         hidden = len(items) - len(shown)
 
-        painter.setFont(QFont("Sans Serif", 8))
+        painter.setFont(QFont("Segoe UI", 8))
         for idx, item in enumerate(shown):
             host = item[0]
             ly = legend_rect.top() + 8 + idx * row_h
             color = QColor(colors[idx % len(colors)])
-            pen = QPen(color)
-            pen.setWidth(2)
-            painter.setPen(pen)
-            lx = legend_rect.left() + 6
-            painter.drawLine(QPointF(lx, ly), QPointF(lx + 12, ly))
+            lx = legend_rect.left() + 8
+            painter.setBrush(QBrush(color))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(QRectF(lx, ly - 3, 10, 6), 3, 3)
             painter.setPen(legend_color)
             painter.drawText(
                 QRectF(lx + 16, ly - 7, legend_w - 24, 14),
@@ -330,13 +790,13 @@ class LatencyChart(QWidget):
             ly = legend_rect.top() + 8 + len(shown) * row_h
             painter.setPen(muted)
             painter.drawText(
-                QRectF(legend_rect.left() + 6, ly - 7, legend_w - 12, 14),
+                QRectF(legend_rect.left() + 8, ly - 7, legend_w - 16, 14),
                 Qt.AlignLeft | Qt.AlignVCenter,
                 f"+{hidden} more...",
             )
 
         painter.setPen(muted)
-        painter.setFont(QFont("Sans Serif", 8))
+        painter.setFont(QFont("Consolas", 8))
         painter.drawText(
             QRectF(plot.left(), plot.bottom() + 6, plot.width(), 18),
             Qt.AlignCenter,
@@ -378,6 +838,9 @@ class PingMonitorApp(QMainWindow):
         self.host_data = {}
         self._host_items = {}
         self._last_down_signature = None
+        self._dns_error_count = 0
+        self._active_sort_col = None
+        self._active_sort_order = Qt.AscendingOrder
 
         self.packet_size_bytes = self.PACKET_SIZE_BYTES
         self.ping_interval_seconds = self.PING_INTERVAL_SECONDS
@@ -605,7 +1068,7 @@ class PingMonitorApp(QMainWindow):
 
         # Search row
         search_row = QHBoxLayout()
-        search_row.setSpacing(8)
+        search_row.setSpacing(10)
         search_label = QLabel("Filter:")
         search_label.setObjectName("bodyLabel")
         search_row.addWidget(search_label)
@@ -614,6 +1077,15 @@ class PingMonitorApp(QMainWindow):
         self.search_box.textChanged.connect(self.filter_table)
         self.search_box.setMinimumWidth(220)
         search_row.addWidget(self.search_box)
+
+        self.dns_issues_btn = QPushButton("0 DNS Issues")
+        self.dns_issues_btn.setObjectName("dnsIssuesBtn")
+        self.dns_issues_btn.setCursor(Qt.PointingHandCursor)
+        self.dns_issues_btn.setFixedHeight(30)
+        self.dns_issues_btn.setToolTip("View hostnames with DNS resolution failures (retired from probing)")
+        self.dns_issues_btn.clicked.connect(self.open_dns_issues_dialog)
+        search_row.addWidget(self.dns_issues_btn)
+
         search_row.addStretch()
         root.addLayout(search_row)
 
@@ -645,11 +1117,14 @@ class PingMonitorApp(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(False)
-        self.table.setSortingEnabled(True)
+        self.table.setSortingEnabled(False)
         self.table.setShowGrid(True)
         self.table.doubleClicked.connect(self.on_table_double_click)
         h = self.table.horizontalHeader()
         h.setFixedHeight(32)
+        h.setSectionsClickable(True)
+        h.setSortIndicatorShown(False)
+        h.sectionClicked.connect(self.on_table_header_clicked)
         h.setSectionResizeMode(QHeaderView.Stretch)
         h.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         dash_layout.addWidget(self.table)
@@ -716,65 +1191,80 @@ class PingMonitorApp(QMainWindow):
 
     def apply_style(self):
         dark = self._is_dark
-        bg_main = "#0d1117" if dark else "#f6f8fa"
-        bg_card = "#161b22" if dark else "#ffffff"
-        bg_input = "#0d1117" if dark else "#ffffff"
-        border_input = "#30363d" if dark else "#d0d7de"
-        text_main = "#e6edf3" if dark else "#1f2328"
-        text_muted = "#848d97" if dark else "#656d76"
-        bg_table = "#0d1117" if dark else "#ffffff"
-        grid_color = "#21262d" if dark else "#eaeef2"
-        header_bg = "#161b22" if dark else "#f6f8fa"
-        header_text = "#848d97" if dark else "#57606a"
-        scroll_bg = "#0d1117" if dark else "#f6f8fa"
-        scroll_handle = "#30363d" if dark else "#8c959f"
-        primary = "#238636" if dark else "#1f883d"
-        primary_hover = "#2ea043" if dark else "#1a7f37"
+        bg_main = "#090d16" if dark else "#f8fafc"
+        bg_card = "#111726" if dark else "#ffffff"
+        bg_input = "#0b101c" if dark else "#ffffff"
+        border_input = "#1c2438" if dark else "#e2e8f0"
+        border_focus = "#3b82f6" if dark else "#2563eb"
+        text_main = "#f1f5f9" if dark else "#0f172a"
+        text_muted = "#94a3b8" if dark else "#64748b"
+        text_caption = "#64748b" if dark else "#94a3b8"
+        bg_table = "#0b101c" if dark else "#ffffff"
+        grid_color = "#141b2a" if dark else "#f1f5f9"
+        header_bg = "#131b2c" if dark else "#f8fafc"
+        header_text = "#94a3b8" if dark else "#475569"
+        scroll_bg = "#090d16" if dark else "#f8fafc"
+        scroll_handle = "#26334d" if dark else "#cbd5e1"
+        scroll_hover = "#384b6e" if dark else "#94a3b8"
+
+        # Action-aware primary button
+        if self.is_monitoring:
+            primary = "#e11d48"
+            primary_hover = "#be123c"
+        else:
+            primary = "#2563eb"
+            primary_hover = "#1d4ed8"
 
         qss = f"""
         QMainWindow, QWidget {{
             background-color: {bg_main};
             color: {text_main};
-            font-family: "Sans Serif";
+            font-family: "Segoe UI", Arial, sans-serif;
             font-size: 12px;
         }}
         QFrame#cardFrame {{
             background-color: {bg_card};
             color: {text_main};
             border: 1px solid {border_input};
-            border-radius: 6px;
+            border-radius: 8px;
         }}
         QSplitter::handle {{
-            background: {bg_main};
+            background: {border_input};
+            height: 2px;
         }}
         QLabel {{
             color: {text_main};
             background: transparent;
         }}
         QLabel#appTitle {{
-            font-size: 18px;
-            font-weight: 600;
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
             color: {text_main};
         }}
         QLabel#appSubtitle {{
             color: {text_muted};
-            font-size: 11px;
+            font-size: 12px;
+            font-weight: 400;
         }}
         QLabel#appFooter {{
-            color: {text_muted};
+            color: {text_caption};
             font-size: 11px;
+            font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
         }}
         QLabel#sectionCaption {{
             color: {text_muted};
             font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.4px;
+            font-weight: 700;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
         }}
         QLabel#targetConfigurationCaption {{
             color: {text_muted};
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.4px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
         }}
         QLabel#strongLabel {{
             color: {text_main};
@@ -783,12 +1273,14 @@ class PingMonitorApp(QMainWindow):
         }}
         QLabel#bodyLabel {{
             color: {text_main};
+            font-size: 12px;
         }}
         QLabel#captionLabel {{
-            color: {text_muted};
+            color: {text_caption};
+            font-size: 11px;
         }}
         QLabel#healthyLabel {{
-            color: {"#3fb950" if dark else "#1a7f37"};
+            color: {"#10b981" if dark else "#059669"};
             font-weight: 600;
         }}
         QLineEdit, QSpinBox, QDoubleSpinBox {{
@@ -796,12 +1288,12 @@ class PingMonitorApp(QMainWindow):
             color: {text_main};
             border: 1px solid {border_input};
             border-radius: 6px;
-            padding: 5px 8px;
-            selection-background-color: #388bfd;
+            padding: 6px 10px;
+            selection-background-color: {primary};
             selection-color: #ffffff;
         }}
         QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
-            border: 1px solid #388bfd;
+            border: 1px solid {border_focus};
         }}
         QPushButton#primaryBtn {{
             background-color: {primary};
@@ -809,30 +1301,31 @@ class PingMonitorApp(QMainWindow):
             border: none;
             border-radius: 6px;
             font-weight: 600;
-            padding: 5px 14px;
+            padding: 6px 16px;
         }}
         QPushButton#primaryBtn:hover {{
             background-color: {primary_hover};
         }}
         QPushButton#primaryBtn:disabled {{
-            background-color: {"#111a16" if dark else "#bad8b6"};
-            color: {"#484f58" if dark else "#8c959f"};
+            background-color: {"#1c2438" if dark else "#e2e8f0"};
+            color: {"#475569" if dark else "#94a3b8"};
         }}
         QPushButton#secondaryBtn {{
-            background-color: {"#21262d" if dark else "#f6f8fa"};
+            background-color: {"#151c2b" if dark else "#ffffff"};
             color: {text_main};
             border: 1px solid {border_input};
             border-radius: 6px;
             font-weight: 500;
-            padding: 5px 12px;
+            padding: 6px 12px;
         }}
         QPushButton#secondaryBtn:hover {{
-            background-color: {"#30363d" if dark else "#f3f4f6"};
-            border-color: {"#8b949e" if dark else "#8c959f"};
+            background-color: {"#1e273a" if dark else "#f1f5f9"};
+            border-color: {"#2b3850" if dark else "#cbd5e1"};
         }}
         QPushButton#secondaryBtn:disabled {{
-            color: {text_muted};
+            color: {text_caption};
             border-color: {border_input};
+            background-color: {"#0d121c" if dark else "#f8fafc"};
         }}
         QTableWidget {{
             background-color: {bg_table};
@@ -845,20 +1338,22 @@ class PingMonitorApp(QMainWindow):
         QTableWidget::item {{
             color: {text_main};
             background-color: {bg_table};
-            padding: 5px;
+            padding: 6px 8px;
         }}
         QTableWidget::item:selected {{
-            background-color: {"#1f6feb" if dark else "#0969da"};
-            color: #ffffff;
+            background-color: {"#1e293b" if dark else "#e2e8f0"};
+            color: {text_main};
         }}
         QHeaderView::section {{
             background-color: {header_bg};
             color: {header_text};
             border: none;
             border-bottom: 1px solid {border_input};
-            padding: 6px;
-            font-size: 11px;
-            font-weight: 600;
+            padding: 7px 10px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
         }}
         QHeaderView {{
             background-color: {header_bg};
@@ -873,33 +1368,21 @@ class PingMonitorApp(QMainWindow):
             background: {scroll_handle};
             border-radius: 4px;
         }}
-        QTableWidget#liveTelemetryTable QScrollBar:vertical {{
-            width: 16px;
+        QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
+            background: {scroll_hover};
+        }}
+        QTableWidget#liveTelemetryTable QScrollBar:vertical, QTableWidget#noReplyTable QScrollBar:vertical {{
+            width: 10px;
             background: transparent;
             margin: 32px 2px 2px 2px;
         }}
-        QTableWidget#liveTelemetryTable QScrollBar::handle:vertical {{
-            min-height: 44px;
-            background: {"#3d444d" if dark else "#8c959f"};
-            border: 3px solid {bg_table};
-            border-radius: 8px;
+        QTableWidget#liveTelemetryTable QScrollBar::handle:vertical, QTableWidget#noReplyTable QScrollBar::handle:vertical {{
+            min-height: 40px;
+            background: {scroll_handle};
+            border-radius: 5px;
         }}
-        QTableWidget#liveTelemetryTable QScrollBar::handle:vertical:hover {{
-            background: {"#545d68" if dark else "#6e7781"};
-        }}
-        QTableWidget#noReplyTable QScrollBar:vertical {{
-            width: 16px;
-            background: transparent;
-            margin: 32px 2px 2px 2px;
-        }}
-        QTableWidget#noReplyTable QScrollBar::handle:vertical {{
-            min-height: 44px;
-            background: {"#3d444d" if dark else "#8c959f"};
-            border: 3px solid {bg_table};
-            border-radius: 8px;
-        }}
-        QTableWidget#noReplyTable QScrollBar::handle:vertical:hover {{
-            background: {"#545d68" if dark else "#6e7781"};
+        QTableWidget#liveTelemetryTable QScrollBar::handle:vertical:hover, QTableWidget#noReplyTable QScrollBar::handle:vertical:hover {{
+            background: {scroll_hover};
         }}
         QScrollBar::add-line, QScrollBar::sub-line {{
             height: 0;
@@ -909,6 +1392,8 @@ class PingMonitorApp(QMainWindow):
             background-color: {bg_card};
             color: {text_main};
             border: 1px solid {border_input};
+            padding: 4px 8px;
+            border-radius: 4px;
         }}
         """
         self.setStyleSheet(qss)
@@ -918,7 +1403,10 @@ class PingMonitorApp(QMainWindow):
         self.theme_btn.setAccessibleName(f"{theme_name} theme selected")
 
         if not self.is_monitoring:
-            self._set_status_idle()
+            if self._stop_pending:
+                self._set_status_stopping()
+            else:
+                self._set_status_idle()
         else:
             self._set_status_running()
 
@@ -929,31 +1417,71 @@ class PingMonitorApp(QMainWindow):
             ]
             if not down_hosts:
                 self.down_summary_label.setStyleSheet(
-                    f"color: {'#3fb950' if dark else '#1a7f37'}; font-weight: 600; background: transparent;"
+                    f"color: {'#10b981' if dark else '#059669'}; font-weight: 600; background: transparent;"
                 )
             else:
                 self.down_summary_label.setStyleSheet(
-                    "color: #f85149; font-weight: 600; background: transparent;"
+                    f"color: {'#f43f5e' if dark else '#e11d48'}; font-weight: 600; background: transparent;"
                 )
+
+        self._refresh_table_row_themes()
+        if hasattr(self, "dns_issues_btn"):
+            self.update_dns_pill(getattr(self, "_dns_error_count", 0))
+
+    def _refresh_table_row_themes(self):
+        dark = self._is_dark
+        text_color = QColor("#f1f5f9" if dark else "#0f172a")
+        bg_color = QColor("#0b101c" if dark else "#ffffff")
+        for table in (self.table, self.down_table):
+            for row in range(table.rowCount()):
+                for col in range(table.columnCount()):
+                    item = table.item(row, col)
+                    if item is not None:
+                        item.setBackground(bg_color)
+                        if col == 1:
+                            status = item.text()
+                            if status == "Connected":
+                                item.setForeground(QColor("#10b981" if dark else "#059669"))
+                            elif status == "No ICMP Reply":
+                                item.setForeground(QColor("#f59e0b" if dark else "#d97706"))
+                            elif status in ("Queued", "Idle"):
+                                item.setForeground(QColor("#94a3b8" if dark else "#64748b"))
+                            else:
+                                item.setForeground(QColor("#f43f5e" if dark else "#e11d48"))
+                        else:
+                            item.setForeground(text_color)
 
     def _set_status_idle(self):
         dark = self._is_dark
-        bg = "#21262d" if dark else "#eaeef2"
-        text = "#848d97" if dark else "#57606a"
+        bg = "#161e2e" if dark else "#f1f5f9"
+        border = "#26354d" if dark else "#e2e8f0"
+        text = "#94a3b8" if dark else "#64748b"
         self.status_pill.setText("IDLE")
         self.status_pill.setStyleSheet(
-            f"background: {bg}; color: {text};"
-            "border-radius: 4px; font-weight: 600;"
+            f"background: {bg}; color: {text}; border: 1px solid {border}; "
+            "border-radius: 12px; font-weight: 700; font-size: 11px; letter-spacing: 0.6px;"
         )
 
     def _set_status_running(self):
         dark = self._is_dark
-        bg = "#113824" if dark else "#dafbe1"
-        text = "#3fb950" if dark else "#1a7f37"
+        bg = "rgba(16, 185, 129, 0.15)" if dark else "#ecfdf5"
+        border = "#059669" if dark else "#a7f3d0"
+        text = "#34d399" if dark else "#059669"
         self.status_pill.setText("MONITORING")
         self.status_pill.setStyleSheet(
-            f"background: {bg}; color: {text};"
-            "border-radius: 4px; font-weight: 600;"
+            f"background: {bg}; color: {text}; border: 1px solid {border}; "
+            "border-radius: 12px; font-weight: 700; font-size: 11px; letter-spacing: 0.6px;"
+        )
+
+    def _set_status_stopping(self):
+        dark = self._is_dark
+        bg = "rgba(245, 158, 11, 0.15)" if dark else "#fffbeb"
+        border = "#d97706" if dark else "#fde68a"
+        text = "#fbbf24" if dark else "#d97706"
+        self.status_pill.setText("STOPPING")
+        self.status_pill.setStyleSheet(
+            f"background: {bg}; color: {text}; border: 1px solid {border}; "
+            "border-radius: 12px; font-weight: 700; font-size: 11px; letter-spacing: 0.6px;"
         )
 
     # ------------------------------------------------------------------ Helpers
@@ -962,7 +1490,9 @@ class PingMonitorApp(QMainWindow):
         return status in ("No ICMP Reply", "Unreachable")
 
     @staticmethod
-    def _compute_host_stats(data):
+    def _compute_host_stats(
+        data: dict,
+    ) -> tuple[int, int, float | None, float | None, float | None, float | None]:
         sent = data["sent"]
         received = data["received"]
         loss_pct = round(((sent - received) / sent) * 100, 1) if sent > 0 else None
@@ -981,6 +1511,9 @@ class PingMonitorApp(QMainWindow):
         dialog.setViewMode(QFileDialog.ViewMode.Detail)
         dialog.setNameFilter(name_filter)
         dialog.setOption(QFileDialog.Option.ReadOnly, not save)
+        start_dir = os.path.dirname(os.path.abspath(__file__))
+        if os.path.isdir(start_dir):
+            dialog.setDirectory(start_dir)
         if save:
             dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
             dialog.setFileMode(QFileDialog.FileMode.AnyFile)
@@ -991,9 +1524,6 @@ class PingMonitorApp(QMainWindow):
         else:
             dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
             dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
-        start_dir = os.path.dirname(os.path.abspath(__file__))
-        if os.path.isdir(start_dir):
-            dialog.setDirectory(start_dir)
         if dialog.exec():
             selected = dialog.selectedFiles()
             if selected:
@@ -1260,6 +1790,7 @@ class PingMonitorApp(QMainWindow):
         self._last_down_signature = None
         self.table.setRowCount(0)
         self.down_table.setRowCount(0)
+        self.update_dns_pill(0)
 
         self._run_id += 1
         for host in self.hosts:
@@ -1283,14 +1814,19 @@ class PingMonitorApp(QMainWindow):
             row = self.table.rowCount()
             self.table.insertRow(row)
             values = [host, "Queued", "0", "-", "0%", "0"]
+            sort_vals = {2: 0, 3: float("inf"), 4: 0.0, 5: 0}
             dark = self._is_dark
-            text_color = QColor("#e6edf3" if dark else "#1f2328")
-            bg_color = QColor("#0d1117" if dark else "#ffffff")
+            text_color = QColor("#f1f5f9" if dark else "#0f172a")
+            bg_color = QColor("#0b101c" if dark else "#ffffff")
+            mono_font = QFont("Consolas", 10)
+            mono_font.setStyleHint(QFont.Monospace)
             for col, value in enumerate(values):
-                item = SortableTableWidgetItem(str(value), numeric=col in (2, 3, 4, 5))
+                item = SortableTableWidgetItem(str(value), numeric=col in (2, 3, 4, 5), sort_value=sort_vals.get(col))
                 item.setTextAlignment(Qt.AlignCenter)
                 item.setForeground(text_color)
                 item.setBackground(bg_color)
+                if col in (2, 3, 4, 5):
+                    item.setFont(mono_font)
                 self.table.setItem(row, col, item)
                 if col == 0:
                     self._host_items[host] = item
@@ -1300,6 +1836,7 @@ class PingMonitorApp(QMainWindow):
         self.host_count_label.setText(f"0 up / {len(self.host_data)} total")
         self.set_controls_enabled(False)
         self.start_btn.setText("Stop Monitoring")
+        self.apply_style()
         self._set_status_running()
         self.export_txt_btn.setEnabled(False)
         self.export_csv_btn.setEnabled(False)
@@ -1313,6 +1850,8 @@ class PingMonitorApp(QMainWindow):
             interval=self.ping_interval_seconds,
             max_concurrent=self.max_concurrent_probes,
         )
+        if hasattr(task.signals, "batch_completed"):
+            task.signals.batch_completed.connect(self._handle_probe_batch)
         task.signals.completed.connect(self._handle_probe_result)
         task.signals.finished.connect(self._handle_probe_task_finished)
         self.probe_task = task
@@ -1328,7 +1867,7 @@ class PingMonitorApp(QMainWindow):
             self.set_controls_enabled(False)
             self.start_btn.setText("Stopping…")
             self.start_btn.setEnabled(False)
-            self.status_pill.setText("STOPPING")
+            self._set_status_stopping()
             self.footer_label.setText("Finishing current probes…")
         else:
             self._finalize_stop()
@@ -1339,6 +1878,7 @@ class PingMonitorApp(QMainWindow):
         self.set_controls_enabled(True)
         self.start_btn.setEnabled(True)
         self.start_btn.setText("Start Monitoring")
+        self.apply_style()
         self._set_status_idle()
         self.export_txt_btn.setEnabled(bool(self.host_data))
         self.export_csv_btn.setEnabled(bool(self.host_data))
@@ -1366,11 +1906,7 @@ class PingMonitorApp(QMainWindow):
                 QMessageBox.Warning,
             )
 
-    @Slot(int, str, object)
-    def _handle_probe_result(self, run_id, target, result):
-        if run_id != self._run_id or not self.is_monitoring:
-            return
-
+    def _process_single_result(self, target: str, result: ProbeResult, update_table: bool = True, trigger_sort: bool = False):
         if target not in self.host_data:
             return
         if not isinstance(result, ProbeResult):
@@ -1434,19 +1970,49 @@ class PingMonitorApp(QMainWindow):
         del data["timeline_stats"][:-self.MAX_LOG_ENTRIES]
         del data["log_rows"][:-self.MAX_LOG_ENTRIES]
 
-        loss_pct = (
-            round(((data["sent"] - data["received"]) / data["sent"]) * 100, 1)
-            if data["sent"] else None
-        )
-        row_values = (
-            target,
-            status,
-            str(sequence),
-            latency_text,
-            f"{loss_pct}%" if loss_pct is not None else "n/a",
-            str(data["consecutive_fails"]),
-        )
-        self.update_row(target, row_values)
+        if update_table:
+            if status == "DNS Error":
+                self.remove_host_row(target)
+            else:
+                loss_pct = (
+                    round(((data["sent"] - data["received"]) / data["sent"]) * 100, 1)
+                    if data["sent"] else None
+                )
+                row_values = (
+                    target,
+                    status,
+                    str(sequence),
+                    latency_text,
+                    f"{loss_pct}%" if loss_pct is not None else "n/a",
+                    str(data["consecutive_fails"]),
+                )
+                sort_values = {
+                    2: sequence,
+                    3: latency if (status == "Connected" and latency is not None) else float("inf"),
+                    4: loss_pct if loss_pct is not None else float("-1"),
+                    5: data["consecutive_fails"],
+                }
+                self.update_row(target, row_values, trigger_sort=trigger_sort, sort_values=sort_values)
+
+    @Slot(int, str, object)
+    def _handle_probe_result(self, run_id, target, result):
+        if run_id != self._run_id or not self.is_monitoring:
+            return
+        # If batching is active, ignore redundant individual completed signal
+        if hasattr(self, "probe_task") and self.probe_task is not None and hasattr(self.probe_task.signals, "batch_completed"):
+            return
+        self._process_single_result(target, result, update_table=True, trigger_sort=False)
+        self.update_footer_stats()
+
+    @Slot(int, list)
+    def _handle_probe_batch(self, run_id, batch):
+        if run_id != self._run_id or not self.is_monitoring:
+            return
+        if not batch:
+            return
+        for item in batch:
+            if isinstance(item, (tuple, list)) and len(item) == 2:
+                self._process_single_result(item[0], item[1], update_table=True, trigger_sort=False)
         self.update_footer_stats()
 
     def set_controls_enabled(self, enabled):
@@ -1459,36 +2025,95 @@ class PingMonitorApp(QMainWindow):
         self.history_spin.setEnabled(enabled)
         self.concurrency_spin.setEnabled(enabled)
 
+    def _is_host_in_table(self, host: str) -> bool:
+        if host in self._host_items:
+            return True
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, 0)
+            if it and it.text() == host:
+                return True
+        return False
+
+    @Slot(str)
+    def remove_host_row(self, host: str):
+        col0_item = self._host_items.pop(host, None)
+        if col0_item is not None:
+            row = col0_item.row()
+            if row >= 0:
+                self.table.removeRow(row)
+                return
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, 0)
+            if it and it.text() == host:
+                self.table.removeRow(r)
+                break
+
+    def on_table_header_clicked(self, col: int):
+        header = self.table.horizontalHeader()
+        if self._active_sort_col == col:
+            order = (
+                Qt.DescendingOrder
+                if self._active_sort_order == Qt.AscendingOrder
+                else Qt.AscendingOrder
+            )
+        else:
+            order = Qt.DescendingOrder if col in (3, 4, 5) else Qt.AscendingOrder
+        self._active_sort_col = col
+        self._active_sort_order = order
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(col, order)
+        self.table.sortItems(col, order)
+
     @Slot(str, object)
-    def update_row(self, host, values):
+    def update_row(self, host, values, trigger_sort: bool = False, sort_values: dict | None = None):
         col0_item = self._host_items.get(host)
         if col0_item is None:
             return
         row = col0_item.row()
         if row < 0:
             return
-        self.table.setSortingEnabled(False)
+
         dark = self._is_dark
-        text_color = QColor("#e6edf3" if dark else "#1f2328")
-        bg_color = QColor("#0d1117" if dark else "#ffffff")
+        text_color = QColor("#f1f5f9" if dark else "#0f172a")
+        bg_color = QColor("#0b101c" if dark else "#ffffff")
+        mono_font = QFont("Consolas", 10)
+        mono_font.setStyleHint(QFont.Monospace)
+
         for col, value in enumerate(values):
-            item = SortableTableWidgetItem(str(value), numeric=col in (2, 3, 4, 5))
-            item.setTextAlignment(Qt.AlignCenter)
-            item.setForeground(text_color)
-            item.setBackground(bg_color)
-            self.table.setItem(row, col, item)
-            if col == 0:
-                self._host_items[host] = item
+            val_str = str(value)
+            sv = sort_values.get(col) if sort_values else None
+            item = self.table.item(row, col)
+            if item is None:
+                item = SortableTableWidgetItem(val_str, numeric=col in (2, 3, 4, 5), sort_value=sv)
+                item.setTextAlignment(Qt.AlignCenter)
+                item.setForeground(text_color)
+                item.setBackground(bg_color)
+                if col in (2, 3, 4, 5):
+                    item.setFont(mono_font)
+                self.table.setItem(row, col, item)
+                if col == 0:
+                    self._host_items[host] = item
+            else:
+                if hasattr(item, "set_value"):
+                    item.set_value(val_str, sort_value=sv)
+                else:
+                    if item.text() != val_str:
+                        item.setText(val_str)
+                    if sv is not None:
+                        item.setData(Qt.UserRole, sv)
+
         status = str(values[1])
         status_item = self.table.item(row, 1)
-        if status == "Connected":
-            status_item.setForeground(QColor("#3fb950" if dark else "#1a7f37"))
-        elif status == "No ICMP Reply":
-            status_item.setForeground(QColor("#d29922" if dark else "#9a6700"))
-        else:
-            status_item.setForeground(QColor("#f85149" if dark else "#cf222e"))
-        status_item.setToolTip(self.host_data.get(host, {}).get("last_error") or "")
-        self.table.setSortingEnabled(True)
+        if status_item is not None:
+            if status == "Connected":
+                status_item.setForeground(QColor("#10b981" if dark else "#059669"))
+            elif status == "No ICMP Reply":
+                status_item.setForeground(QColor("#f59e0b" if dark else "#d97706"))
+            elif status in ("Queued", "Idle"):
+                status_item.setForeground(QColor("#94a3b8" if dark else "#64748b"))
+            else:
+                status_item.setForeground(QColor("#f43f5e" if dark else "#e11d48"))
+            status_item.setToolTip(self.host_data.get(host, {}).get("last_error") or "")
 
     def filter_table(self, text):
         text = text.strip().lower()
@@ -1507,6 +2132,89 @@ class PingMonitorApp(QMainWindow):
                 dlg = HostDetailDialog(host, data, dark=self._is_dark, parent=self)
                 dlg.exec()
 
+    def update_dns_pill(self, count: int):
+        self._dns_error_count = count
+        if not hasattr(self, "dns_issues_btn"):
+            return
+        dark = self._is_dark
+        if count == 0:
+            self.dns_issues_btn.setText("0 DNS Issues")
+            if dark:
+                self.dns_issues_btn.setStyleSheet("""
+                    QPushButton#dnsIssuesBtn {
+                        background-color: #111726;
+                        color: #64748b;
+                        border: 1px solid #1c2438;
+                        border-radius: 15px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                        font-weight: 500;
+                    }
+                    QPushButton#dnsIssuesBtn:hover {
+                        background-color: #151c2b;
+                        color: #94a3b8;
+                    }
+                """)
+            else:
+                self.dns_issues_btn.setStyleSheet("""
+                    QPushButton#dnsIssuesBtn {
+                        background-color: #f1f5f9;
+                        color: #64748b;
+                        border: 1px solid #e2e8f0;
+                        border-radius: 15px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                        font-weight: 500;
+                    }
+                    QPushButton#dnsIssuesBtn:hover {
+                        background-color: #e2e8f0;
+                        color: #334155;
+                    }
+                """)
+        else:
+            self.dns_issues_btn.setText(f"⚠ {count} DNS Issue{'s' if count != 1 else ''}")
+            if dark:
+                self.dns_issues_btn.setStyleSheet("""
+                    QPushButton#dnsIssuesBtn {
+                        background-color: rgba(245, 158, 11, 0.15);
+                        color: #fbbf24;
+                        border: 1px solid rgba(245, 158, 11, 0.45);
+                        border-radius: 15px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                        font-weight: 700;
+                    }
+                    QPushButton#dnsIssuesBtn:hover {
+                        background-color: rgba(245, 158, 11, 0.25);
+                        border: 1px solid #fbbf24;
+                    }
+                """)
+            else:
+                self.dns_issues_btn.setStyleSheet("""
+                    QPushButton#dnsIssuesBtn {
+                        background-color: #fef3c7;
+                        color: #b45309;
+                        border: 1px solid #f59e0b;
+                        border-radius: 15px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                        font-weight: 700;
+                    }
+                    QPushButton#dnsIssuesBtn:hover {
+                        background-color: #fde68a;
+                        border: 1px solid #d97706;
+                    }
+                """)
+
+    def open_dns_issues_dialog(self):
+        dns_issues = [
+            (host, data)
+            for host, data in self.host_data.items()
+            if data.get("last_status") == "DNS Error"
+        ]
+        dlg = DNSIssuesDialog(dns_issues, dark=self._is_dark, parent=self)
+        dlg.exec()
+
     def clear_history(self):
         if self.is_monitoring or not self.host_data:
             return
@@ -1515,6 +2223,9 @@ class PingMonitorApp(QMainWindow):
         self.host_data.clear()
         self._host_items.clear()
         self._last_down_signature = None
+        self._active_sort_col = None
+        self._active_sort_order = Qt.AscendingOrder
+        self.table.horizontalHeader().setSortIndicatorShown(False)
         self.table.setRowCount(0)
         self.down_table.setRowCount(0)
         self.host_count_label.setText("0 up / 0 total")
@@ -1524,6 +2235,7 @@ class PingMonitorApp(QMainWindow):
             f"color: {'#3fb950' if dark else '#1a7f37'}; font-weight: 600; background: transparent;"
         )
         self.chart.set_data({}, self.graph_history_points)
+        self.update_dns_pill(0)
         self.export_txt_btn.setEnabled(False)
         self.export_csv_btn.setEnabled(False)
         self.export_xlsx_btn.setEnabled(False)
@@ -1533,10 +2245,39 @@ class PingMonitorApp(QMainWindow):
     def refresh_dashboard(self):
         if not self.host_data:
             self.update_footer_stats()
+            self.update_dns_pill(0)
             return
+
+        dns_issue_count = sum(
+            1 for data in self.host_data.values()
+            if data.get("last_status") == "DNS Error"
+        )
+        if dns_issue_count > 0:
+            for host, data in list(self.host_data.items()):
+                if data.get("last_status") == "DNS Error" and (host in self._host_items or self._is_host_in_table(host)):
+                    self.remove_host_row(host)
+
+        # Periodic controlled table re-sort (at most once per second, never on raw packet updates)
+        if self._active_sort_col is not None:
+            self.table.sortItems(self._active_sort_col, self._active_sort_order)
+
         up_count = sum(data.get("last_status") == "Connected" for data in self.host_data.values())
-        self.host_count_label.setText(f"{up_count} up / {len(self.host_data)} total")
-        self.chart.set_data(self.host_data, self.graph_history_points)
+        monitored_count = len(self.host_data) - dns_issue_count
+        if dns_issue_count > 0:
+            self.host_count_label.setText(f"{up_count} up / {monitored_count} monitored")
+        else:
+            self.host_count_label.setText(f"{up_count} up / {len(self.host_data)} total")
+
+        # Live telemetry chart: strictly only include pingable ("Connected") and timeouts ("No ICMP Reply")
+        # Excludes DNS resolution failures and unhandled probe exceptions
+        chart_targets = {
+            host: data
+            for host, data in self.host_data.items()
+            if data.get("last_status") in ("Connected", "No ICMP Reply")
+        }
+        self.chart.set_data(chart_targets, self.graph_history_points)
+
+        self.update_dns_pill(dns_issue_count)
         pending_count = sum(
             1 for data in self.host_data.values()
             if data.get("checks", data.get("sent", 0)) == 0
@@ -1581,9 +2322,9 @@ class PingMonitorApp(QMainWindow):
             if summary_parts:
                 self.down_summary_label.setText(" · ".join(summary_parts))
                 if down_hosts:
-                    color = "#f85149"
+                    color = "#f43f5e" if dark else "#e11d48"
                 elif probe_issues:
-                    color = "#d29922"
+                    color = "#f59e0b" if dark else "#d97706"
                 else:
                     color = "#848d97" if dark else "#656d76"
                 self.down_summary_label.setStyleSheet(
@@ -1592,11 +2333,13 @@ class PingMonitorApp(QMainWindow):
             else:
                 self.down_summary_label.setText("No current ICMP failures")
                 self.down_summary_label.setStyleSheet(
-                    f"color: {'#3fb950' if dark else '#1a7f37'}; font-weight: 600; background: transparent;"
+                    f"color: {'#10b981' if dark else '#059669'}; font-weight: 600; background: transparent;"
                 )
             if down_hosts:
-                text_color = QColor("#e6edf3" if dark else "#1f2328")
-                bg_color = QColor("#0d1117" if dark else "#ffffff")
+                text_color = QColor("#f1f5f9" if dark else "#0f172a")
+                bg_color = QColor("#0b101c" if dark else "#ffffff")
+                mono_font = QFont("Consolas", 10)
+                mono_font.setStyleHint(QFont.Monospace)
                 for host, data in down_hosts:
                     row = self.down_table.rowCount()
                     self.down_table.insertRow(row)
@@ -1615,7 +2358,16 @@ class PingMonitorApp(QMainWindow):
                         item.setTextAlignment(Qt.AlignCenter)
                         item.setForeground(text_color)
                         item.setBackground(bg_color)
+                        if col in (2, 3):
+                            item.setFont(mono_font)
                         self.down_table.setItem(row, col, item)
+                    status_col_item = self.down_table.item(row, 1)
+                    if status_col_item is not None:
+                        status_val = str(values[1])
+                        if status_val == "No ICMP Reply":
+                            status_col_item.setForeground(QColor("#f59e0b" if dark else "#d97706"))
+                        else:
+                            status_col_item.setForeground(QColor("#f43f5e" if dark else "#e11d48"))
             self.down_table.setSortingEnabled(True)
         self.update_footer_stats()
 
@@ -1894,10 +2646,13 @@ class PingMonitorApp(QMainWindow):
                 ]
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
+                def write_sanitized_row(row_dict):
+                    writer.writerow({k: _sanitize_csv_cell(v) for k, v in row_dict.items()})
+
                 generated = time.strftime("%Y-%m-%d %H:%M:%S")
                 for host, data in data_snapshot.items():
                     sent, received, loss_pct, min_lat, max_lat, avg_lat = self._compute_host_stats(data)
-                    writer.writerow({
+                    write_sanitized_row({
                         "Section": "Summary",
                         "Host": host,
                         "Status": data.get("last_status") or "-",
@@ -1912,7 +2667,7 @@ class PingMonitorApp(QMainWindow):
                         "Timestamp": generated,
                     })
                     if self._is_down_status(data.get("last_status")):
-                        writer.writerow({
+                        write_sanitized_row({
                             "Section": "No ICMP Reply",
                             "Host": host,
                             "Status": data.get("last_status"),
@@ -1920,8 +2675,18 @@ class PingMonitorApp(QMainWindow):
                             "Last_Down_At": data.get("last_down_time", "-"),
                             "Details": data.get("last_error") or "",
                         })
+                    if data.get("last_status") == "DNS Error":
+                        write_sanitized_row({
+                            "Section": "DNS Failures",
+                            "Host": host,
+                            "Status": "DNS Error",
+                            "Consecutive_Fails": data.get("consecutive_fails", 0),
+                            "Last_Down_At": data.get("last_down_time", "-"),
+                            "Timestamp": generated,
+                            "Details": data.get("last_error") or "Name resolution failed",
+                        })
                     for sequence, timestamp, status, details in data.get("log_rows", []):
-                        writer.writerow({
+                        write_sanitized_row({
                             "Section": "Probe",
                             "Host": host,
                             "Sequence": sequence,
@@ -1952,6 +2717,7 @@ class PingMonitorApp(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Ping Check Enhanced")
+    app.setFont(QFont("Segoe UI", 9))
 
     window = PingMonitorApp()
     window.show()

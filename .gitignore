@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment
+.venv/
+venv/
+
+# Generated reports & logs
+network_report.*
+*.log
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.tmp.*/

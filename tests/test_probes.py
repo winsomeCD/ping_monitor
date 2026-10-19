@@ -66,6 +66,12 @@ class DNSResolverTests(unittest.TestCase):
         result = asyncio.run(resolver.resolve("example.com"))
         self.assertEqual(result, "93.184.216.34")
 
+    def test_resolver_pre_resolve_all(self):
+        resolver = DNSResolver(ttl=60.0)
+        resolver._cache["example.com"] = ("93.184.216.34", 9999999999.0)
+        results = asyncio.run(resolver.pre_resolve_all(["1.1.1.1", "example.com"]))
+        self.assertEqual(results, {"example.com": "93.184.216.34"})
+
 
 class AsyncICMPSessionTests(unittest.TestCase):
     def test_checksum_calculation(self):
@@ -176,6 +182,43 @@ class ProbeTests(unittest.TestCase):
         self.assertLessEqual(peak_active, 250)
         self.assertEqual(ping_mock.await_count, 1000)
 
+    @patch("probes.async_ping", new_callable=AsyncMock)
+    def test_probe_task_emits_batches(self, ping_mock):
+        ping_mock.return_value = SimpleNamespace(is_alive=True, avg_rtt=1.5)
+        targets = ["10.0.0.1", "10.0.0.2"]
+        task = ProbeTask(11, targets, 56, 1.0, 0.1)
+        batches = []
+
+        def on_batch(run_id, batch):
+            batches.append((run_id, batch))
+            task.request_stop()
+
+        task.signals.batch_completed.connect(on_batch)
+        task.run()
+
+        self.assertTrue(len(batches) >= 1)
+        self.assertEqual(batches[0][0], 11)
+        flattened = [item[0] for _, b in batches for item in b]
+        self.assertTrue(any(t in flattened for t in targets))
+
+    @patch("probes.DNSResolver.resolve", new_callable=AsyncMock)
+    def test_probe_task_retires_dns_error_host_after_retry(self, resolve_mock):
+        resolve_mock.side_effect = NameLookupError("Mock lookup failure")
+        target = "unresolvable-node.invalid"
+        task = ProbeTask(22, [target], 56, 1.0, 0.05)
+        emitted_results = []
+
+        task.signals.completed.connect(
+            lambda run_id, host, res: emitted_results.append((host, res.status))
+        )
+        task.run()
+
+        self.assertEqual(len(emitted_results), 1)
+        self.assertEqual(emitted_results[0], (target, "DNS Error"))
+        # 1 pre-resolve call + 1 initial monitor attempt + 1 retry = 3 resolve calls
+        self.assertEqual(resolve_mock.await_count, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
+
