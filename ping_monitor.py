@@ -814,6 +814,39 @@ class CardFrame(QFrame):
         self.setFrameShape(QFrame.NoFrame)
 
 
+class MetricCard(QFrame):
+    """Sleek telemetry KPI stat card for top ribbon."""
+
+    def __init__(self, title: str, value: str = "—", subtitle: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("metricCard")
+        self.setFrameShape(QFrame.NoFrame)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(2)
+
+        self.lbl_title = QLabel(title.upper())
+        self.lbl_title.setObjectName("metricTitle")
+        self.lbl_title.setTextFormat(Qt.PlainText)
+
+        self.lbl_val = QLabel(value)
+        self.lbl_val.setObjectName("metricValue")
+        self.lbl_val.setTextFormat(Qt.PlainText)
+
+        self.lbl_sub = QLabel(subtitle)
+        self.lbl_sub.setObjectName("metricSub")
+        self.lbl_sub.setTextFormat(Qt.PlainText)
+
+        layout.addWidget(self.lbl_title)
+        layout.addWidget(self.lbl_val)
+        layout.addWidget(self.lbl_sub)
+
+    def set_data(self, value: str, subtitle: str | None = None):
+        self.lbl_val.setText(str(value))
+        if subtitle is not None:
+            self.lbl_sub.setText(str(subtitle))
+
+
 # ---------------------------------------------------------------------------
 # Main Application
 # ---------------------------------------------------------------------------
@@ -913,32 +946,49 @@ class PingMonitorApp(QMainWindow):
         header.addLayout(right_box)
         root.addLayout(header)
 
-        # Config card
+        # Telemetry KPI Ribbon
+        kpi_row = QHBoxLayout()
+        kpi_row.setSpacing(10)
+        self.card_fleet = MetricCard("Monitored Targets", "0 Targets", "Awaiting start")
+        self.card_reachability = MetricCard("Fleet Reachability", "100%", "0 unreachable")
+        self.card_latency = MetricCard("Average RTT", "—", "Min / Max —")
+        self.card_loss = MetricCard("Global ICMP Loss", "0.0%", "0 dropped pkts")
+        kpi_row.addWidget(self.card_fleet)
+        kpi_row.addWidget(self.card_reachability)
+        kpi_row.addWidget(self.card_latency)
+        kpi_row.addWidget(self.card_loss)
+        root.addLayout(kpi_row)
+
+        # Target Configuration & Parameter Deck
         config_card = CardFrame()
         config_layout = QVBoxLayout(config_card)
         config_layout.setContentsMargins(16, 14, 16, 14)
         config_layout.setSpacing(10)
 
-        section = QLabel("TARGET CONFIGURATION")
+        section = QLabel("TARGET FLEET CONFIGURATION")
         section.setObjectName("targetConfigurationCaption")
+        section.setTextFormat(Qt.PlainText)
         config_layout.addWidget(section)
 
         host_row = QHBoxLayout()
         host_row.setSpacing(8)
         self.host_entry = QLineEdit()
         self.host_entry.setText("8.8.8.8, 1.1.1.1, google.com")
-        self.host_entry.setPlaceholderText("Enter hosts separated by commas (e.g. 8.8.8.8, example.com)")
+        self.host_entry.setPlaceholderText("Enter target IPs or domains separated by commas (e.g. 8.8.8.8, 1.1.1.1, google.com)")
         self.host_entry.setClearButtonEnabled(True)
+        self.host_entry.setFixedHeight(34)
         host_row.addWidget(self.host_entry, 1)
 
         self.import_btn = QPushButton("Import List")
         self.import_btn.clicked.connect(self.import_hosts_from_file)
         self.import_btn.setObjectName("secondaryBtn")
+        self.import_btn.setFixedHeight(34)
         host_row.addWidget(self.import_btn)
 
         self.save_config_btn = QPushButton("Save Config")
         self.save_config_btn.clicked.connect(self.save_config)
         self.save_config_btn.setObjectName("secondaryBtn")
+        self.save_config_btn.setFixedHeight(34)
         host_row.addWidget(self.save_config_btn)
 
         config_layout.addLayout(host_row)
@@ -950,12 +1000,15 @@ class PingMonitorApp(QMainWindow):
         pkt_col.setSpacing(3)
         pkt_lbl = QLabel("PACKET SIZE")
         pkt_lbl.setObjectName("sectionCaption")
+        pkt_lbl.setTextFormat(Qt.PlainText)
         pkt_col.addWidget(pkt_lbl)
         self.packet_spin = QSpinBox()
         self.packet_spin.setRange(0, 65500)
         self.packet_spin.setValue(56)
         self.packet_spin.setSuffix(" B")
-        self.packet_spin.setMinimumWidth(120)
+        self.packet_spin.setMinimumWidth(100)
+        self.packet_spin.setFixedHeight(34)
+        self.packet_spin.setToolTip("ICMP payload size in bytes (0 to 65500).")
         pkt_col.addWidget(self.packet_spin)
         settings_row.addLayout(pkt_col)
 
@@ -963,6 +1016,7 @@ class PingMonitorApp(QMainWindow):
         int_col.setSpacing(3)
         int_lbl = QLabel("INTERVAL")
         int_lbl.setObjectName("sectionCaption")
+        int_lbl.setTextFormat(Qt.PlainText)
         int_col.addWidget(int_lbl)
         self.interval_spin = QDoubleSpinBox()
         self.interval_spin.setRange(0.1, 3600.0)
@@ -970,7 +1024,9 @@ class PingMonitorApp(QMainWindow):
         self.interval_spin.setSingleStep(0.1)
         self.interval_spin.setValue(1.0)
         self.interval_spin.setSuffix(" s")
-        self.interval_spin.setMinimumWidth(110)
+        self.interval_spin.setMinimumWidth(100)
+        self.interval_spin.setFixedHeight(34)
+        self.interval_spin.setToolTip("Repeat cycle interval per host.")
         int_col.addWidget(self.interval_spin)
         settings_row.addLayout(int_col)
 
@@ -978,6 +1034,7 @@ class PingMonitorApp(QMainWindow):
         timeout_col.setSpacing(3)
         timeout_lbl = QLabel("TIMEOUT")
         timeout_lbl.setObjectName("sectionCaption")
+        timeout_lbl.setTextFormat(Qt.PlainText)
         timeout_col.addWidget(timeout_lbl)
         self.timeout_spin = QDoubleSpinBox()
         self.timeout_spin.setRange(0.1, 10.0)
@@ -985,125 +1042,133 @@ class PingMonitorApp(QMainWindow):
         self.timeout_spin.setSingleStep(0.1)
         self.timeout_spin.setValue(2.0)
         self.timeout_spin.setSuffix(" s")
-        self.timeout_spin.setMinimumWidth(110)
+        self.timeout_spin.setMinimumWidth(100)
+        self.timeout_spin.setFixedHeight(34)
+        self.timeout_spin.setToolTip("Maximum wait time for each ICMP echo reply.")
         timeout_col.addWidget(self.timeout_spin)
         settings_row.addLayout(timeout_col)
 
         hist_col = QVBoxLayout()
         hist_col.setSpacing(3)
-        hist_lbl = QLabel("CHART HISTORY")
+        hist_lbl = QLabel("WINDOW")
         hist_lbl.setObjectName("sectionCaption")
+        hist_lbl.setTextFormat(Qt.PlainText)
         hist_col.addWidget(hist_lbl)
         self.history_spin = QSpinBox()
         self.history_spin.setRange(1, 10000)
         self.history_spin.setValue(60)
         self.history_spin.setSuffix(" pts")
-        self.history_spin.setMinimumWidth(120)
+        self.history_spin.setMinimumWidth(100)
+        self.history_spin.setFixedHeight(34)
+        self.history_spin.setToolTip("Graph telemetry sample window points.")
         hist_col.addWidget(self.history_spin)
         settings_row.addLayout(hist_col)
 
         concurrency_col = QVBoxLayout()
         concurrency_col.setSpacing(3)
-        concurrency_caption_row = QHBoxLayout()
-        concurrency_caption_row.setSpacing(6)
         concurrency_lbl = QLabel("MAX PARALLEL")
         concurrency_lbl.setObjectName("sectionCaption")
-        max_concurrency_note = QLabel(f"Max: {MAX_CONCURRENT_PROBES}")
-        max_concurrency_note.setObjectName("captionLabel")
-        concurrency_caption_row.addWidget(concurrency_lbl)
-        concurrency_caption_row.addWidget(max_concurrency_note)
-        concurrency_caption_row.addStretch()
-        concurrency_col.addLayout(concurrency_caption_row)
+        concurrency_lbl.setTextFormat(Qt.PlainText)
+        concurrency_col.addWidget(concurrency_lbl)
         self.concurrency_spin = QSpinBox()
         self.concurrency_spin.setRange(1, MAX_CONCURRENT_PROBES)
         self.concurrency_spin.setValue(MAX_CONCURRENT_PROBES)
         self.concurrency_spin.setSuffix(" hosts")
-        self.concurrency_spin.setMinimumWidth(120)
+        self.concurrency_spin.setMinimumWidth(110)
+        self.concurrency_spin.setFixedHeight(34)
         self.concurrency_spin.setToolTip(
-            f"Maximum number of simultaneous ICMP/DNS probes (application limit: {MAX_CONCURRENT_PROBES}). "
-            "Linux uses fping's paced multi-host loop when available, so this setting applies to the fallback backend there. "
-            "Your system or network may require a lower value."
+            f"Maximum number of simultaneous ICMP/DNS probes (application limit: {MAX_CONCURRENT_PROBES})."
         )
         concurrency_col.addWidget(self.concurrency_spin)
         settings_row.addLayout(concurrency_col)
 
         settings_row.addStretch()
-        config_layout.addLayout(settings_row)
 
-        actions_row = QHBoxLayout()
-        actions_row.addStretch()
-
-        self.start_btn = QPushButton("Start Monitoring")
-        self.start_btn.setObjectName("primaryBtn")
-        self.start_btn.setFixedHeight(34)
-        self.start_btn.clicked.connect(self.toggle_monitoring)
-        actions_row.addWidget(self.start_btn)
+        # Action Buttons aligned compactly
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(8)
+        btn_box.setAlignment(Qt.AlignBottom)
 
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self.clear_history)
         self.clear_btn.setEnabled(False)
         self.clear_btn.setObjectName("secondaryBtn")
-        actions_row.addWidget(self.clear_btn)
-
-        self.export_txt_btn = QPushButton("Export TXT")
-        self.export_txt_btn.setEnabled(False)
-        self.export_txt_btn.clicked.connect(self.export_report_summary)
-        self.export_txt_btn.setObjectName("secondaryBtn")
-        actions_row.addWidget(self.export_txt_btn)
+        self.clear_btn.setFixedHeight(34)
+        btn_box.addWidget(self.clear_btn)
 
         self.export_csv_btn = QPushButton("Export CSV")
         self.export_csv_btn.setEnabled(False)
         self.export_csv_btn.clicked.connect(self.export_report_csv)
         self.export_csv_btn.setObjectName("secondaryBtn")
-        actions_row.addWidget(self.export_csv_btn)
+        self.export_csv_btn.setFixedHeight(34)
+        btn_box.addWidget(self.export_csv_btn)
 
         self.export_xlsx_btn = QPushButton("Export XLSX")
         self.export_xlsx_btn.setEnabled(False)
         self.export_xlsx_btn.clicked.connect(self.export_report_xlsx)
         self.export_xlsx_btn.setObjectName("secondaryBtn")
-        actions_row.addWidget(self.export_xlsx_btn)
+        self.export_xlsx_btn.setFixedHeight(34)
+        btn_box.addWidget(self.export_xlsx_btn)
 
-        config_layout.addLayout(actions_row)
+        self.export_txt_btn = QPushButton("Export TXT")
+        self.export_txt_btn.setEnabled(False)
+        self.export_txt_btn.clicked.connect(self.export_report_summary)
+        self.export_txt_btn.setObjectName("secondaryBtn")
+        self.export_txt_btn.setFixedHeight(34)
+        btn_box.addWidget(self.export_txt_btn)
+
+        self.start_btn = QPushButton("▶ Start Monitoring")
+        self.start_btn.setObjectName("primaryBtn")
+        self.start_btn.setFixedHeight(34)
+        self.start_btn.clicked.connect(self.toggle_monitoring)
+        btn_box.addWidget(self.start_btn)
+
+        settings_row.addLayout(btn_box)
+        config_layout.addLayout(settings_row)
         root.addWidget(config_card)
-
-        # Search row
-        search_row = QHBoxLayout()
-        search_row.setSpacing(10)
-        search_label = QLabel("Filter:")
-        search_label.setObjectName("bodyLabel")
-        search_row.addWidget(search_label)
-        self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Filter targets...")
-        self.search_box.textChanged.connect(self.filter_table)
-        self.search_box.setMinimumWidth(220)
-        search_row.addWidget(self.search_box)
-
-        self.dns_issues_btn = QPushButton("0 DNS Issues")
-        self.dns_issues_btn.setObjectName("dnsIssuesBtn")
-        self.dns_issues_btn.setCursor(Qt.PointingHandCursor)
-        self.dns_issues_btn.setFixedHeight(30)
-        self.dns_issues_btn.setToolTip("View hostnames with DNS resolution failures (retired from probing)")
-        self.dns_issues_btn.clicked.connect(self.open_dns_issues_dialog)
-        search_row.addWidget(self.dns_issues_btn)
-
-        search_row.addStretch()
-        root.addLayout(search_row)
 
         # Main splitter
         vertical = QSplitter(Qt.Vertical)
         root.addWidget(vertical, 1)
 
+        # Upper Deck: Live Telemetry Table
         dash_card = CardFrame()
         dash_layout = QVBoxLayout(dash_card)
         dash_layout.setContentsMargins(14, 12, 14, 12)
-        dash_layout.setSpacing(6)
+        dash_layout.setSpacing(8)
+
         top = QHBoxLayout()
-        dash_title = QLabel("Live Telemetry Table")
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(10)
+        dash_title = QLabel("LIVE TELEMETRY TABLE")
         dash_title.setObjectName("strongLabel")
+        dash_title.setTextFormat(Qt.PlainText)
+        top.addWidget(dash_title)
+
+        # Integrated Filter Input
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Filter targets...")
+        self.search_box.textChanged.connect(self.filter_table)
+        self.search_box.setMinimumWidth(180)
+        self.search_box.setMaximumWidth(240)
+        self.search_box.setFixedHeight(28)
+        self.search_box.setObjectName("searchBox")
+        top.addWidget(self.search_box)
+
+        # Isolated DNS Failures Pill Button
+        self.dns_issues_btn = QPushButton("0 DNS Issues")
+        self.dns_issues_btn.setObjectName("dnsIssuesBtn")
+        self.dns_issues_btn.setCursor(Qt.PointingHandCursor)
+        self.dns_issues_btn.setFixedHeight(28)
+        self.dns_issues_btn.setToolTip("View hostnames with DNS resolution failures (isolated from telemetry)")
+        self.dns_issues_btn.clicked.connect(self.open_dns_issues_dialog)
+        top.addWidget(self.dns_issues_btn)
+
+        top.addStretch()
+
         self.host_count_label = QLabel("0 up / 0 total")
         self.host_count_label.setObjectName("captionLabel")
-        top.addWidget(dash_title)
-        top.addStretch()
+        self.host_count_label.setTextFormat(Qt.PlainText)
         top.addWidget(self.host_count_label)
         dash_layout.addLayout(top)
 
@@ -1227,6 +1292,28 @@ class PingMonitorApp(QMainWindow):
             color: {text_main};
             border: 1px solid {border_input};
             border-radius: 8px;
+        }}
+        QFrame#metricCard {{
+            background-color: {bg_card};
+            border: 1px solid {border_input};
+            border-radius: 8px;
+        }}
+        QLabel#metricTitle {{
+            color: {text_caption};
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+        }}
+        QLabel#metricValue {{
+            color: {text_main};
+            font-size: 19px;
+            font-weight: 700;
+            font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+            letter-spacing: -0.4px;
+        }}
+        QLabel#metricSub {{
+            color: {text_muted};
+            font-size: 11px;
         }}
         QSplitter::handle {{
             background: {border_input};
@@ -1835,7 +1922,7 @@ class PingMonitorApp(QMainWindow):
         self._stop_pending = False
         self.host_count_label.setText(f"0 up / {len(self.host_data)} total")
         self.set_controls_enabled(False)
-        self.start_btn.setText("Stop Monitoring")
+        self.start_btn.setText("⏹ Stop Monitoring")
         self.apply_style()
         self._set_status_running()
         self.export_txt_btn.setEnabled(False)
@@ -1877,7 +1964,7 @@ class PingMonitorApp(QMainWindow):
         self.probe_task = None
         self.set_controls_enabled(True)
         self.start_btn.setEnabled(True)
-        self.start_btn.setText("Start Monitoring")
+        self.start_btn.setText("▶ Start Monitoring")
         self.apply_style()
         self._set_status_idle()
         self.export_txt_btn.setEnabled(bool(self.host_data))
@@ -2374,10 +2461,43 @@ class PingMonitorApp(QMainWindow):
     def update_footer_stats(self):
         if not self.host_data:
             self.footer_label.setText("No targets yet • Ready")
+            self.card_fleet.set_data("0 Targets", "Awaiting start")
+            self.card_reachability.set_data("100%", "0 unreachable")
+            self.card_latency.set_data("—", "Min / Max —")
+            self.card_loss.set_data("0.0%", "0 dropped pkts")
             return
+
+        total_hosts = len(self.host_data)
+        dns_issue_count = sum(d.get("last_status") == "DNS Error" for d in self.host_data.values())
+        monitored_hosts = total_hosts - dns_issue_count
+        up_count = sum(data.get("last_status") == "Connected" for data in self.host_data.values())
+        down_count = sum(self._is_down_status(d.get("last_status")) for d in self.host_data.values())
+        reachability_pct = round((up_count / monitored_hosts * 100), 1) if monitored_hosts else 0.0
+
         total_sent = sum(d["sent"] for d in self.host_data.values())
         total_recv = sum(d["received"] for d in self.host_data.values())
         overall_loss = ((total_sent - total_recv) / total_sent * 100) if total_sent else None
+
+        latency_sum = sum(d.get("latency_sum", 0.0) for d in self.host_data.values())
+        latency_cnt = sum(d.get("latency_count", 0) for d in self.host_data.values())
+        if latency_cnt:
+            avg_lat_str = f"{latency_sum / latency_cnt:.2f} ms"
+            minima = [d["min_latency"] for d in self.host_data.values() if d.get("min_latency") is not None]
+            maxima = [d["max_latency"] for d in self.host_data.values() if d.get("max_latency") is not None]
+            lat_sub = f"Min {min(minima):.1f} / Max {max(maxima):.1f} ms" if minima and maxima else f"{latency_cnt} samples"
+        else:
+            avg_lat_str = "—"
+            lat_sub = "Min / Max —"
+
+        if dns_issue_count > 0:
+            self.card_fleet.set_data(f"{monitored_hosts} Monitored", f"{up_count} online / {dns_issue_count} DNS failures")
+        else:
+            self.card_fleet.set_data(f"{total_hosts} Targets", f"{up_count} online / {down_count} down")
+        self.card_reachability.set_data(f"{reachability_pct}%", f"{up_count} reachable")
+        self.card_latency.set_data(avg_lat_str, lat_sub)
+        loss_str = f"{overall_loss:.1f}%" if overall_loss is not None else "0.0%"
+        self.card_loss.set_data(loss_str, f"{total_sent - total_recv} dropped packets")
+
         no_reply = sum(
             self._is_down_status(d.get("last_status")) for d in self.host_data.values()
         )
