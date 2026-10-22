@@ -189,53 +189,59 @@ class HostDetailDialog(QDialog):
 
     def _apply_style(self):
         dark = self._dark
-        bg = "#090d16" if dark else "#f8fafc"
-        text = "#f1f5f9" if dark else "#0f172a"
+        bg = "#0a0d14" if dark else "#f8fafc"
+        text = "#f8fafc" if dark else "#0f172a"
         muted = "#94a3b8" if dark else "#64748b"
-        input_bg = "#0b101c" if dark else "#ffffff"
-        border = "#1c2438" if dark else "#e2e8f0"
+        input_bg = "#0d121e" if dark else "#ffffff"
+        border = "#1e293b" if dark else "#e2e8f0"
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {bg};
                 color: {text};
-                font-family: "Segoe UI", Arial, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             }}
             QLabel#detailTitle {{
-                font-size: 16px;
+                font-size: 17px;
                 font-weight: 700;
+                letter-spacing: -0.3px;
                 color: {text};
                 background: transparent;
             }}
             QLabel#mutedLabel {{
                 color: {muted};
                 font-size: 12px;
+                font-weight: 500;
                 background: transparent;
             }}
             QLabel#strongLabel {{
                 color: {text};
                 font-weight: 600;
                 font-size: 13px;
+                font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
                 background: transparent;
             }}
             QTextEdit {{
                 background-color: {input_bg};
                 color: {text};
                 border: 1px solid {border};
-                border-radius: 6px;
-                padding: 10px;
+                border-radius: 8px;
+                padding: 12px;
                 font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
                 font-size: 11px;
+                line-height: 1.4;
             }}
             QPushButton#secondaryBtn {{
-                background-color: {"#151c2b" if dark else "#ffffff"};
+                background-color: {"#131a29" if dark else "#ffffff"};
                 color: {text};
                 border: 1px solid {border};
-                border-radius: 6px;
-                font-weight: 500;
-                padding: 6px 16px;
+                border-radius: 7px;
+                font-weight: 600;
+                font-size: 12px;
+                padding: 7px 18px;
             }}
             QPushButton#secondaryBtn:hover {{
-                background-color: {"#1e273a" if dark else "#f1f5f9"};
+                background-color: {"#1a2438" if dark else "#f1f5f9"};
+                border-color: {"#2b3a56" if dark else "#cbd5e1"};
             }}
         """)
 
@@ -369,7 +375,7 @@ class DNSIssuesDialog(QDialog):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         dark = self._dark
-        text_color = QColor("#f1f5f9" if dark else "#0f172a")
+        text_color = QColor("#f8fafc" if dark else "#0f172a")
         mono_font = QFont("Consolas", 10)
         mono_font.setStyleHint(QFont.Monospace)
 
@@ -515,14 +521,14 @@ class DNSIssuesDialog(QDialog):
 
     def _apply_style(self):
         dark = self._dark
-        bg = "#090d16" if dark else "#f8fafc"
-        text = "#f1f5f9" if dark else "#0f172a"
+        bg = "#0a0d14" if dark else "#f8fafc"
+        text = "#f8fafc" if dark else "#0f172a"
         muted = "#94a3b8" if dark else "#64748b"
-        border = "#1c2438" if dark else "#e2e8f0"
-        header_bg = "#151c2b" if dark else "#f1f5f9"
-        row_alt = "#0d1322" if dark else "#f8fafc"
-        row_sel = "#1e293b" if dark else "#e2e8f0"
-        input_bg = "#0b101c" if dark else "#ffffff"
+        border = "#1e293b" if dark else "#e2e8f0"
+        header_bg = "#141b2c" if dark else "#f1f5f9"
+        row_alt = "#0d121e" if dark else "#f8fafc"
+        row_sel = "#1e293f" if dark else "#e2e8f0"
+        input_bg = "#0d121e" if dark else "#ffffff"
         amber = "#fbbf24" if dark else "#b45309"
         amber_bg = "rgba(245, 158, 11, 0.12)" if dark else "#fef3c7"
         amber_border = "rgba(245, 158, 11, 0.4)" if dark else "#f59e0b"
@@ -531,17 +537,19 @@ class DNSIssuesDialog(QDialog):
             QDialog {{
                 background-color: {bg};
                 color: {text};
-                font-family: "Segoe UI", Arial, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             }}
             QLabel#dnsDialogTitle {{
-                font-size: 16px;
+                font-size: 17px;
                 font-weight: 700;
+                letter-spacing: -0.3px;
                 color: {text};
                 background: transparent;
             }}
             QLabel#dnsDialogSubtitle {{
                 color: {muted};
                 font-size: 12px;
+                line-height: 1.4;
                 background: transparent;
             }}
             QLabel#counterLabel {{
@@ -553,28 +561,29 @@ class DNSIssuesDialog(QDialog):
             QLabel#mutedLabel {{
                 color: {muted};
                 font-size: 12px;
+                font-weight: 500;
                 background: transparent;
             }}
             QLabel#badgeLabel {{
                 background-color: {amber_bg};
                 color: {amber};
                 border: 1px solid {amber_border};
-                border-radius: 10px;
-                padding: 2px 8px;
+                border-radius: 12px;
+                padding: 3px 10px;
                 font-size: 10px;
                 font-weight: 700;
-                letter-spacing: 0.5px;
+                letter-spacing: 0.6px;
             }}
             QLineEdit {{
                 background-color: {input_bg};
                 color: {text};
                 border: 1px solid {border};
-                border-radius: 6px;
-                padding: 6px 10px;
+                border-radius: 7px;
+                padding: 6px 11px;
                 font-size: 12px;
             }}
             QLineEdit:focus {{
-                border: 1px solid #3b82f6;
+                border: 1px solid #38bdf8;
             }}
             QTableWidget {{
                 background-color: {input_bg};
@@ -582,7 +591,7 @@ class DNSIssuesDialog(QDialog):
                 color: {text};
                 gridline-color: {border};
                 border: 1px solid {border};
-                border-radius: 6px;
+                border-radius: 8px;
                 selection-background-color: {row_sel};
                 selection-color: {text};
                 font-size: 12px;
@@ -590,35 +599,35 @@ class DNSIssuesDialog(QDialog):
             QHeaderView::section {{
                 background-color: {header_bg};
                 color: {muted};
-                font-weight: 600;
-                font-size: 11px;
+                font-weight: 700;
+                font-size: 10.5px;
                 border: none;
                 border-bottom: 1px solid {border};
-                padding: 6px 8px;
+                padding: 8px 10px;
                 text-transform: uppercase;
-                letter-spacing: 0.5px;
+                letter-spacing: 0.6px;
             }}
             QPushButton#secondaryBtn {{
-                background-color: {header_bg};
+                background-color: {"#131a29" if dark else "#ffffff"};
                 color: {text};
                 border: 1px solid {border};
-                border-radius: 6px;
+                border-radius: 7px;
                 font-weight: 600;
                 font-size: 12px;
                 padding: 6px 14px;
             }}
             QPushButton#secondaryBtn:hover {{
-                background-color: {"#1e273a" if dark else "#e2e8f0"};
-                border-color: {"#2a3650" if dark else "#cbd5e1"};
+                background-color: {"#1a2438" if dark else "#f1f5f9"};
+                border-color: {"#2b3a56" if dark else "#cbd5e1"};
             }}
             QPushButton#primaryActionBtn {{
                 background-color: #2563eb;
                 color: #ffffff;
-                border: 1px solid #3b82f6;
-                border-radius: 6px;
+                border: 1px solid {"rgba(255,255,255,0.15)" if dark else "transparent"};
+                border-radius: 7px;
                 font-weight: 600;
                 font-size: 12px;
-                padding: 6px 16px;
+                padding: 6px 18px;
             }}
             QPushButton#primaryActionBtn:hover {{
                 background-color: #1d4ed8;
@@ -689,18 +698,18 @@ class LatencyChart(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         dark = self._dark
-        bg = QColor("#090d16" if dark else "#ffffff")
-        title_color = QColor("#f1f5f9" if dark else "#0f172a")
+        bg = QColor("#111624" if dark else "#ffffff")
+        title_color = QColor("#f8fafc" if dark else "#0f172a")
         muted = QColor("#64748b" if dark else "#94a3b8")
-        grid_color = QColor("#1c2438" if dark else "#f1f5f9")
-        legend_color = QColor("#f1f5f9" if dark else "#0f172a")
-        legend_bg = QColor("#111726" if dark else "#f8fafc")
+        grid_color = QColor("#1c273c" if dark else "#f1f5f9")
+        legend_color = QColor("#f8fafc" if dark else "#0f172a")
+        legend_bg = QColor("#151d2f" if dark else "#f8fafc")
         colors = self.COLORS_DARK if dark else self.COLORS_LIGHT
 
         painter.fillRect(self.rect(), bg)
         painter.setPen(title_color)
-        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        painter.drawText(16, 22, "Latency History")
+        painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        painter.drawText(16, 22, "LIVE LATENCY TELEMETRY")
 
         n_hosts = len(self.history)
         legend_w = 144 if n_hosts else 0
@@ -822,8 +831,8 @@ class MetricCard(QFrame):
         self.setObjectName("metricCard")
         self.setFrameShape(QFrame.NoFrame)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(2)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(3)
 
         self.lbl_title = QLabel(title.upper())
         self.lbl_title.setObjectName("metricTitle")
@@ -931,15 +940,16 @@ class PingMonitorApp(QMainWindow):
         right_box.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.theme_btn = QPushButton()
-        self.theme_btn.setFixedSize(34, 30)
+        self.theme_btn.setFixedSize(36, 32)
         self.theme_btn.clicked.connect(self.toggle_theme)
         self.theme_btn.setObjectName("secondaryBtn")
+        self.theme_btn.setCursor(Qt.PointingHandCursor)
 
         self.status_pill = QLabel("IDLE")
         self.status_pill.setObjectName("statusIdle")
-        self.status_pill.setFixedHeight(30)
+        self.status_pill.setFixedHeight(32)
         self.status_pill.setAlignment(Qt.AlignCenter)
-        self.status_pill.setMinimumWidth(110)
+        self.status_pill.setMinimumWidth(116)
 
         right_box.addWidget(self.theme_btn)
         right_box.addWidget(self.status_pill)
@@ -948,7 +958,7 @@ class PingMonitorApp(QMainWindow):
 
         # Telemetry KPI Ribbon
         kpi_row = QHBoxLayout()
-        kpi_row.setSpacing(10)
+        kpi_row.setSpacing(12)
         self.card_fleet = MetricCard("Monitored Targets", "0 Targets", "Awaiting start")
         self.card_reachability = MetricCard("Fleet Reachability", "100%", "0 unreachable")
         self.card_latency = MetricCard("Average RTT", "—", "Min / Max —")
@@ -983,12 +993,14 @@ class PingMonitorApp(QMainWindow):
         self.import_btn.clicked.connect(self.import_hosts_from_file)
         self.import_btn.setObjectName("secondaryBtn")
         self.import_btn.setFixedHeight(34)
+        self.import_btn.setCursor(Qt.PointingHandCursor)
         host_row.addWidget(self.import_btn)
 
         self.save_config_btn = QPushButton("Save Config")
         self.save_config_btn.clicked.connect(self.save_config)
         self.save_config_btn.setObjectName("secondaryBtn")
         self.save_config_btn.setFixedHeight(34)
+        self.save_config_btn.setCursor(Qt.PointingHandCursor)
         host_row.addWidget(self.save_config_btn)
 
         config_layout.addLayout(host_row)
@@ -1094,6 +1106,7 @@ class PingMonitorApp(QMainWindow):
         self.clear_btn.setEnabled(False)
         self.clear_btn.setObjectName("secondaryBtn")
         self.clear_btn.setFixedHeight(34)
+        self.clear_btn.setCursor(Qt.PointingHandCursor)
         btn_box.addWidget(self.clear_btn)
 
         self.export_csv_btn = QPushButton("Export CSV")
@@ -1101,6 +1114,7 @@ class PingMonitorApp(QMainWindow):
         self.export_csv_btn.clicked.connect(self.export_report_csv)
         self.export_csv_btn.setObjectName("secondaryBtn")
         self.export_csv_btn.setFixedHeight(34)
+        self.export_csv_btn.setCursor(Qt.PointingHandCursor)
         btn_box.addWidget(self.export_csv_btn)
 
         self.export_xlsx_btn = QPushButton("Export XLSX")
@@ -1108,6 +1122,7 @@ class PingMonitorApp(QMainWindow):
         self.export_xlsx_btn.clicked.connect(self.export_report_xlsx)
         self.export_xlsx_btn.setObjectName("secondaryBtn")
         self.export_xlsx_btn.setFixedHeight(34)
+        self.export_xlsx_btn.setCursor(Qt.PointingHandCursor)
         btn_box.addWidget(self.export_xlsx_btn)
 
         self.export_txt_btn = QPushButton("Export TXT")
@@ -1115,11 +1130,13 @@ class PingMonitorApp(QMainWindow):
         self.export_txt_btn.clicked.connect(self.export_report_summary)
         self.export_txt_btn.setObjectName("secondaryBtn")
         self.export_txt_btn.setFixedHeight(34)
+        self.export_txt_btn.setCursor(Qt.PointingHandCursor)
         btn_box.addWidget(self.export_txt_btn)
 
         self.start_btn = QPushButton("▶ Start Monitoring")
         self.start_btn.setObjectName("primaryBtn")
         self.start_btn.setFixedHeight(34)
+        self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.clicked.connect(self.toggle_monitoring)
         btn_box.addWidget(self.start_btn)
 
@@ -1256,21 +1273,21 @@ class PingMonitorApp(QMainWindow):
 
     def apply_style(self):
         dark = self._is_dark
-        bg_main = "#090d16" if dark else "#f8fafc"
-        bg_card = "#111726" if dark else "#ffffff"
-        bg_input = "#0b101c" if dark else "#ffffff"
-        border_input = "#1c2438" if dark else "#e2e8f0"
-        border_focus = "#3b82f6" if dark else "#2563eb"
-        text_main = "#f1f5f9" if dark else "#0f172a"
+        bg_main = "#0a0d14" if dark else "#f8fafc"
+        bg_card = "#111624" if dark else "#ffffff"
+        bg_input = "#0d121e" if dark else "#ffffff"
+        border_input = "#1e293b" if dark else "#e2e8f0"
+        border_focus = "#38bdf8" if dark else "#2563eb"
+        text_main = "#f8fafc" if dark else "#0f172a"
         text_muted = "#94a3b8" if dark else "#64748b"
         text_caption = "#64748b" if dark else "#94a3b8"
-        bg_table = "#0b101c" if dark else "#ffffff"
-        grid_color = "#141b2a" if dark else "#f1f5f9"
-        header_bg = "#131b2c" if dark else "#f8fafc"
+        bg_table = "#0d121e" if dark else "#ffffff"
+        grid_color = "#171f30" if dark else "#f1f5f9"
+        header_bg = "#141b2c" if dark else "#f8fafc"
         header_text = "#94a3b8" if dark else "#475569"
-        scroll_bg = "#090d16" if dark else "#f8fafc"
+        scroll_bg = "#0a0d14" if dark else "#f8fafc"
         scroll_handle = "#26334d" if dark else "#cbd5e1"
-        scroll_hover = "#384b6e" if dark else "#94a3b8"
+        scroll_hover = "#3b4e72" if dark else "#94a3b8"
 
         # Action-aware primary button
         if self.is_monitoring:
@@ -1284,36 +1301,38 @@ class PingMonitorApp(QMainWindow):
         QMainWindow, QWidget {{
             background-color: {bg_main};
             color: {text_main};
-            font-family: "Segoe UI", Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             font-size: 12px;
         }}
         QFrame#cardFrame {{
             background-color: {bg_card};
             color: {text_main};
             border: 1px solid {border_input};
-            border-radius: 8px;
+            border-radius: 9px;
         }}
         QFrame#metricCard {{
             background-color: {bg_card};
             border: 1px solid {border_input};
-            border-radius: 8px;
+            border-radius: 9px;
         }}
         QLabel#metricTitle {{
             color: {text_caption};
             font-size: 10px;
             font-weight: 700;
             letter-spacing: 0.8px;
+            text-transform: uppercase;
         }}
         QLabel#metricValue {{
             color: {text_main};
-            font-size: 19px;
+            font-size: 21px;
             font-weight: 700;
-            font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
-            letter-spacing: -0.4px;
+            font-family: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
+            letter-spacing: -0.5px;
         }}
         QLabel#metricSub {{
             color: {text_muted};
             font-size: 11px;
+            font-weight: 500;
         }}
         QSplitter::handle {{
             background: {border_input};
@@ -1324,9 +1343,9 @@ class PingMonitorApp(QMainWindow):
             background: transparent;
         }}
         QLabel#appTitle {{
-            font-size: 19px;
+            font-size: 20px;
             font-weight: 700;
-            letter-spacing: -0.3px;
+            letter-spacing: -0.4px;
             color: {text_main};
         }}
         QLabel#appSubtitle {{
@@ -1343,12 +1362,12 @@ class PingMonitorApp(QMainWindow):
             color: {text_muted};
             font-size: 10px;
             font-weight: 700;
-            letter-spacing: 0.6px;
+            letter-spacing: 0.7px;
             text-transform: uppercase;
         }}
         QLabel#targetConfigurationCaption {{
             color: {text_muted};
-            font-size: 10px;
+            font-size: 10.5px;
             font-weight: 700;
             letter-spacing: 0.8px;
             text-transform: uppercase;
@@ -1374,10 +1393,11 @@ class PingMonitorApp(QMainWindow):
             background-color: {bg_input};
             color: {text_main};
             border: 1px solid {border_input};
-            border-radius: 6px;
-            padding: 6px 10px;
+            border-radius: 7px;
+            padding: 6px 11px;
             selection-background-color: {primary};
             selection-color: #ffffff;
+            font-size: 12px;
         }}
         QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
             border: 1px solid {border_focus};
@@ -1385,50 +1405,56 @@ class PingMonitorApp(QMainWindow):
         QPushButton#primaryBtn {{
             background-color: {primary};
             color: #ffffff;
-            border: none;
-            border-radius: 6px;
+            border: 1px solid {"rgba(255,255,255,0.15)" if dark else "transparent"};
+            border-radius: 7px;
             font-weight: 600;
-            padding: 6px 16px;
+            font-size: 12px;
+            letter-spacing: 0.2px;
+            padding: 6px 18px;
         }}
         QPushButton#primaryBtn:hover {{
             background-color: {primary_hover};
         }}
         QPushButton#primaryBtn:disabled {{
-            background-color: {"#1c2438" if dark else "#e2e8f0"};
+            background-color: {"#182133" if dark else "#e2e8f0"};
             color: {"#475569" if dark else "#94a3b8"};
+            border: 1px solid {"#1e293b" if dark else "#cbd5e1"};
         }}
         QPushButton#secondaryBtn {{
-            background-color: {"#151c2b" if dark else "#ffffff"};
+            background-color: {"#131a29" if dark else "#ffffff"};
             color: {text_main};
             border: 1px solid {border_input};
-            border-radius: 6px;
+            border-radius: 7px;
             font-weight: 500;
-            padding: 6px 12px;
+            font-size: 12px;
+            padding: 6px 14px;
         }}
         QPushButton#secondaryBtn:hover {{
-            background-color: {"#1e273a" if dark else "#f1f5f9"};
-            border-color: {"#2b3850" if dark else "#cbd5e1"};
+            background-color: {"#1a2438" if dark else "#f1f5f9"};
+            border-color: {"#2b3a56" if dark else "#cbd5e1"};
         }}
         QPushButton#secondaryBtn:disabled {{
             color: {text_caption};
             border-color: {border_input};
-            background-color: {"#0d121c" if dark else "#f8fafc"};
+            background-color: {"#0d131f" if dark else "#f8fafc"};
         }}
         QTableWidget {{
             background-color: {bg_table};
             color: {text_main};
             gridline-color: {grid_color};
             border: 1px solid {border_input};
-            border-radius: 6px;
+            border-radius: 8px;
             outline: none;
+            font-size: 12px;
         }}
         QTableWidget::item {{
             color: {text_main};
             background-color: {bg_table};
-            padding: 6px 8px;
+            padding: 6px 9px;
+            border: none;
         }}
         QTableWidget::item:selected {{
-            background-color: {"#1e293b" if dark else "#e2e8f0"};
+            background-color: {"#1a2538" if dark else "#e2e8f0"};
             color: {text_main};
         }}
         QHeaderView::section {{
@@ -1436,7 +1462,7 @@ class PingMonitorApp(QMainWindow):
             color: {header_text};
             border: none;
             border-bottom: 1px solid {border_input};
-            padding: 7px 10px;
+            padding: 8px 10px;
             font-size: 10px;
             font-weight: 700;
             letter-spacing: 0.6px;
@@ -1448,25 +1474,25 @@ class PingMonitorApp(QMainWindow):
         QScrollBar:vertical, QScrollBar:horizontal {{
             background: {scroll_bg};
             border: none;
-            width: 8px;
-            height: 8px;
+            width: 7px;
+            height: 7px;
         }}
         QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
             background: {scroll_handle};
-            border-radius: 4px;
+            border-radius: 3px;
         }}
         QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
             background: {scroll_hover};
         }}
         QTableWidget#liveTelemetryTable QScrollBar:vertical, QTableWidget#noReplyTable QScrollBar:vertical {{
-            width: 10px;
+            width: 8px;
             background: transparent;
             margin: 32px 2px 2px 2px;
         }}
         QTableWidget#liveTelemetryTable QScrollBar::handle:vertical, QTableWidget#noReplyTable QScrollBar::handle:vertical {{
             min-height: 40px;
             background: {scroll_handle};
-            border-radius: 5px;
+            border-radius: 4px;
         }}
         QTableWidget#liveTelemetryTable QScrollBar::handle:vertical:hover, QTableWidget#noReplyTable QScrollBar::handle:vertical:hover {{
             background: {scroll_hover};
@@ -1479,8 +1505,9 @@ class PingMonitorApp(QMainWindow):
             background-color: {bg_card};
             color: {text_main};
             border: 1px solid {border_input};
-            padding: 4px 8px;
-            border-radius: 4px;
+            padding: 5px 9px;
+            border-radius: 6px;
+            font-size: 11px;
         }}
         """
         self.setStyleSheet(qss)
@@ -1517,8 +1544,8 @@ class PingMonitorApp(QMainWindow):
 
     def _refresh_table_row_themes(self):
         dark = self._is_dark
-        text_color = QColor("#f1f5f9" if dark else "#0f172a")
-        bg_color = QColor("#0b101c" if dark else "#ffffff")
+        text_color = QColor("#f8fafc" if dark else "#0f172a")
+        bg_color = QColor("#0d121e" if dark else "#ffffff")
         for table in (self.table, self.down_table):
             for row in range(table.rowCount()):
                 for col in range(table.columnCount()):
@@ -1530,7 +1557,7 @@ class PingMonitorApp(QMainWindow):
                             if status == "Connected":
                                 item.setForeground(QColor("#10b981" if dark else "#059669"))
                             elif status == "No ICMP Reply":
-                                item.setForeground(QColor("#f59e0b" if dark else "#d97706"))
+                                item.setForeground(QColor("#fbbf24" if dark else "#d97706"))
                             elif status in ("Queued", "Idle"):
                                 item.setForeground(QColor("#94a3b8" if dark else "#64748b"))
                             else:
@@ -1540,35 +1567,35 @@ class PingMonitorApp(QMainWindow):
 
     def _set_status_idle(self):
         dark = self._is_dark
-        bg = "#161e2e" if dark else "#f1f5f9"
-        border = "#26354d" if dark else "#e2e8f0"
+        bg = "#121826" if dark else "#f1f5f9"
+        border = "#1f2a3f" if dark else "#e2e8f0"
         text = "#94a3b8" if dark else "#64748b"
         self.status_pill.setText("IDLE")
         self.status_pill.setStyleSheet(
             f"background: {bg}; color: {text}; border: 1px solid {border}; "
-            "border-radius: 12px; font-weight: 700; font-size: 11px; letter-spacing: 0.6px;"
+            "border-radius: 14px; font-weight: 700; font-size: 11px; letter-spacing: 0.8px; padding: 2px 10px;"
         )
 
     def _set_status_running(self):
         dark = self._is_dark
-        bg = "rgba(16, 185, 129, 0.15)" if dark else "#ecfdf5"
-        border = "#059669" if dark else "#a7f3d0"
+        bg = "rgba(16, 185, 129, 0.12)" if dark else "#ecfdf5"
+        border = "rgba(16, 185, 129, 0.4)" if dark else "#a7f3d0"
         text = "#34d399" if dark else "#059669"
         self.status_pill.setText("MONITORING")
         self.status_pill.setStyleSheet(
             f"background: {bg}; color: {text}; border: 1px solid {border}; "
-            "border-radius: 12px; font-weight: 700; font-size: 11px; letter-spacing: 0.6px;"
+            "border-radius: 14px; font-weight: 700; font-size: 11px; letter-spacing: 0.8px; padding: 2px 10px;"
         )
 
     def _set_status_stopping(self):
         dark = self._is_dark
-        bg = "rgba(245, 158, 11, 0.15)" if dark else "#fffbeb"
-        border = "#d97706" if dark else "#fde68a"
+        bg = "rgba(245, 158, 11, 0.12)" if dark else "#fffbeb"
+        border = "rgba(245, 158, 11, 0.4)" if dark else "#fde68a"
         text = "#fbbf24" if dark else "#d97706"
         self.status_pill.setText("STOPPING")
         self.status_pill.setStyleSheet(
             f"background: {bg}; color: {text}; border: 1px solid {border}; "
-            "border-radius: 12px; font-weight: 700; font-size: 11px; letter-spacing: 0.6px;"
+            "border-radius: 14px; font-weight: 700; font-size: 11px; letter-spacing: 0.8px; padding: 2px 10px;"
         )
 
     # ------------------------------------------------------------------ Helpers
@@ -1903,8 +1930,8 @@ class PingMonitorApp(QMainWindow):
             values = [host, "Queued", "0", "-", "0%", "0"]
             sort_vals = {2: 0, 3: float("inf"), 4: 0.0, 5: 0}
             dark = self._is_dark
-            text_color = QColor("#f1f5f9" if dark else "#0f172a")
-            bg_color = QColor("#0b101c" if dark else "#ffffff")
+            text_color = QColor("#f8fafc" if dark else "#0f172a")
+            bg_color = QColor("#0d121e" if dark else "#ffffff")
             mono_font = QFont("Consolas", 10)
             mono_font.setStyleHint(QFont.Monospace)
             for col, value in enumerate(values):
@@ -2161,8 +2188,8 @@ class PingMonitorApp(QMainWindow):
             return
 
         dark = self._is_dark
-        text_color = QColor("#f1f5f9" if dark else "#0f172a")
-        bg_color = QColor("#0b101c" if dark else "#ffffff")
+        text_color = QColor("#f8fafc" if dark else "#0f172a")
+        bg_color = QColor("#0d121e" if dark else "#ffffff")
         mono_font = QFont("Consolas", 10)
         mono_font.setStyleHint(QFont.Monospace)
 
@@ -2195,7 +2222,7 @@ class PingMonitorApp(QMainWindow):
             if status == "Connected":
                 status_item.setForeground(QColor("#10b981" if dark else "#059669"))
             elif status == "No ICMP Reply":
-                status_item.setForeground(QColor("#f59e0b" if dark else "#d97706"))
+                status_item.setForeground(QColor("#fbbf24" if dark else "#d97706"))
             elif status in ("Queued", "Idle"):
                 status_item.setForeground(QColor("#94a3b8" if dark else "#64748b"))
             else:
@@ -2229,17 +2256,18 @@ class PingMonitorApp(QMainWindow):
             if dark:
                 self.dns_issues_btn.setStyleSheet("""
                     QPushButton#dnsIssuesBtn {
-                        background-color: #111726;
+                        background-color: #111624;
                         color: #64748b;
-                        border: 1px solid #1c2438;
-                        border-radius: 15px;
+                        border: 1px solid #1e293b;
+                        border-radius: 14px;
                         padding: 3px 12px;
                         font-size: 11px;
                         font-weight: 500;
                     }
                     QPushButton#dnsIssuesBtn:hover {
-                        background-color: #151c2b;
+                        background-color: #151d2f;
                         color: #94a3b8;
+                        border-color: #2b3a56;
                     }
                 """)
             else:
@@ -2248,7 +2276,7 @@ class PingMonitorApp(QMainWindow):
                         background-color: #f1f5f9;
                         color: #64748b;
                         border: 1px solid #e2e8f0;
-                        border-radius: 15px;
+                        border-radius: 14px;
                         padding: 3px 12px;
                         font-size: 11px;
                         font-weight: 500;
@@ -2256,6 +2284,7 @@ class PingMonitorApp(QMainWindow):
                     QPushButton#dnsIssuesBtn:hover {
                         background-color: #e2e8f0;
                         color: #334155;
+                        border-color: #cbd5e1;
                     }
                 """)
         else:
@@ -2263,16 +2292,16 @@ class PingMonitorApp(QMainWindow):
             if dark:
                 self.dns_issues_btn.setStyleSheet("""
                     QPushButton#dnsIssuesBtn {
-                        background-color: rgba(245, 158, 11, 0.15);
+                        background-color: rgba(245, 158, 11, 0.12);
                         color: #fbbf24;
-                        border: 1px solid rgba(245, 158, 11, 0.45);
-                        border-radius: 15px;
+                        border: 1px solid rgba(245, 158, 11, 0.4);
+                        border-radius: 14px;
                         padding: 3px 12px;
                         font-size: 11px;
                         font-weight: 700;
                     }
                     QPushButton#dnsIssuesBtn:hover {
-                        background-color: rgba(245, 158, 11, 0.25);
+                        background-color: rgba(245, 158, 11, 0.22);
                         border: 1px solid #fbbf24;
                     }
                 """)
@@ -2282,7 +2311,7 @@ class PingMonitorApp(QMainWindow):
                         background-color: #fef3c7;
                         color: #b45309;
                         border: 1px solid #f59e0b;
-                        border-radius: 15px;
+                        border-radius: 14px;
                         padding: 3px 12px;
                         font-size: 11px;
                         font-weight: 700;
@@ -2423,8 +2452,8 @@ class PingMonitorApp(QMainWindow):
                     f"color: {'#10b981' if dark else '#059669'}; font-weight: 600; background: transparent;"
                 )
             if down_hosts:
-                text_color = QColor("#f1f5f9" if dark else "#0f172a")
-                bg_color = QColor("#0b101c" if dark else "#ffffff")
+                text_color = QColor("#f8fafc" if dark else "#0f172a")
+                bg_color = QColor("#0d121e" if dark else "#ffffff")
                 mono_font = QFont("Consolas", 10)
                 mono_font.setStyleHint(QFont.Monospace)
                 for host, data in down_hosts:
@@ -2452,7 +2481,7 @@ class PingMonitorApp(QMainWindow):
                     if status_col_item is not None:
                         status_val = str(values[1])
                         if status_val == "No ICMP Reply":
-                            status_col_item.setForeground(QColor("#f59e0b" if dark else "#d97706"))
+                            status_col_item.setForeground(QColor("#fbbf24" if dark else "#d97706"))
                         else:
                             status_col_item.setForeground(QColor("#f43f5e" if dark else "#e11d48"))
             self.down_table.setSortingEnabled(True)
