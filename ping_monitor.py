@@ -1027,6 +1027,98 @@ class MetricCard(QFrame):
 
 
 # ---------------------------------------------------------------------------
+# Brand Identity Mark (Apple Squircle Badge & Telemetry Pulse Glyph)
+# ---------------------------------------------------------------------------
+class BrandIconWidget(QWidget):
+    """Custom vector brand icon with an Apple-style squircle badge and telemetry pulse radar glyph."""
+
+    def __init__(self, size: int = 40, parent=None):
+        super().__init__(parent)
+        self.icon_size = size
+        self.setFixedSize(size, size)
+        self._dark = True
+
+    def set_dark(self, dark: bool):
+        self._dark = dark
+        self.update()
+
+    def paintEvent(self, _event):
+        _event.accept()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        w, h = float(self.width()), float(self.height())
+        rect = QRectF(0, 0, w, h)
+
+        dark = self._dark
+
+        # 1. Background Squircle with signature Indigo gradient
+        grad = QLinearGradient(0, 0, w, h)
+        if dark:
+            grad.setColorAt(0.0, QColor("#6366f1"))  # Electric Indigo
+            grad.setColorAt(1.0, QColor("#4338ca"))  # Deep Indigo
+        else:
+            grad.setColorAt(0.0, QColor("#4f46e5"))
+            grad.setColorAt(1.0, QColor("#3730a3"))
+
+        radius = w * 0.26  # Continuous squircle curvature ratio
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(grad))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        # Subtle specular rim
+        border_pen = QPen(QColor(255, 255, 255, 55 if dark else 65))
+        border_pen.setWidthF(1.0)
+        painter.setPen(border_pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+
+        # 2. Geometric Telemetry Mark: Radar arc + pulse waveform + cyan beacon
+        cx, cy = w / 2.0, h / 2.0
+
+        # Radar concentric echo arc
+        arc_pen = QPen(QColor(255, 255, 255, 95))
+        arc_pen.setWidthF(1.8)
+        arc_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(arc_pen)
+
+        r_outer = w * 0.33
+        painter.drawArc(
+            QRectF(cx - r_outer, cy - r_outer, r_outer * 2, r_outer * 2),
+            25 * 16,
+            130 * 16,
+        )
+
+        # Pulse waveform path
+        path = QPainterPath()
+        p0 = QPointF(w * 0.18, cy + w * 0.08)
+        p1 = QPointF(w * 0.34, cy + w * 0.08)
+        p2 = QPointF(w * 0.46, cy - w * 0.24)  # Upward spike
+        p3 = QPointF(w * 0.58, cy + w * 0.22)  # Downward rebound
+        p4 = QPointF(w * 0.68, cy + w * 0.02)
+        p5 = QPointF(w * 0.82, cy + w * 0.02)
+
+        path.moveTo(p0)
+        path.lineTo(p1)
+        path.lineTo(p2)
+        path.lineTo(p3)
+        path.lineTo(p4)
+        path.lineTo(p5)
+
+        pulse_pen = QPen(QColor("#ffffff"))
+        pulse_pen.setWidthF(2.2)
+        pulse_pen.setCapStyle(Qt.RoundCap)
+        pulse_pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pulse_pen)
+        painter.drawPath(path)
+
+        # Glowing focal beacon dot at the apex
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor("#38bdf8")))  # Electric Cyan glow
+        painter.drawEllipse(p2, 2.5, 2.5)
+
+
+# ---------------------------------------------------------------------------
 # Main Application
 # ---------------------------------------------------------------------------
 class PingMonitorApp(QMainWindow):
@@ -1095,18 +1187,36 @@ class PingMonitorApp(QMainWindow):
         # Header bar
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(12)
+
+        # Brand Icon Mark
+        self.brand_icon = BrandIconWidget(size=40)
+        header.addWidget(self.brand_icon, 0, Qt.AlignVCenter)
 
         title_col = QVBoxLayout()
         title_col.setSpacing(2)
-        self.title_label = QLabel("NETWORK REACHABILITY MONITOR")
-        self.title_label.setObjectName("appTitle")
+
+        # Brand Lockup Row: Name + PRO Badge
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(0, 0, 0, 0)
+        brand_row.setSpacing(8)
+
+        self.title_label = QLabel("PING CHECK")
+        self.title_label.setObjectName("brandTitle")
         self.title_label.setTextFormat(Qt.PlainText)
+        brand_row.addWidget(self.title_label)
+
+        self.version_badge = QLabel("PRO")
+        self.version_badge.setObjectName("brandBadge")
+        self.version_badge.setTextFormat(Qt.PlainText)
+        brand_row.addWidget(self.version_badge)
+        brand_row.addStretch()
 
         self.subtitle_label = QLabel("Real-time ICMP telemetry engine & latency diagnostic console")
-        self.subtitle_label.setObjectName("appSubtitle")
+        self.subtitle_label.setObjectName("brandSubtitle")
         self.subtitle_label.setTextFormat(Qt.PlainText)
 
-        title_col.addWidget(self.title_label)
+        title_col.addLayout(brand_row)
         title_col.addWidget(self.subtitle_label)
         header.addLayout(title_col, 1)
 
@@ -1445,12 +1555,16 @@ class PingMonitorApp(QMainWindow):
     def toggle_theme(self):
         self._is_dark = not self._is_dark
         self.apply_style()
+        if hasattr(self, "brand_icon"):
+            self.brand_icon.set_dark(self._is_dark)
         self.chart.set_dark(self._is_dark)
         self.chart.update()
         self.refresh_dashboard()
 
     def apply_style(self):
         dark = self._is_dark
+        if hasattr(self, "brand_icon"):
+            self.brand_icon.set_dark(dark)
         bg_main = "#090d16" if dark else "#f8fafc"
         bg_card = "#111726" if dark else "#ffffff"
         bg_elevated = "#141b2d" if dark else "#f1f5f9"
@@ -1524,9 +1638,33 @@ class PingMonitorApp(QMainWindow):
             color: {text_main};
             background: transparent;
         }}
-        QLabel#appTitle {{
-            font-size: 17px;
+        QLabel#brandTitle {{
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            color: {text_main};
+            font-family: "Segoe UI", sans-serif;
+        }}
+        QLabel#brandBadge {{
+            background-color: {"rgba(99, 102, 241, 0.15)" if dark else "#e0e7ff"};
+            color: {"#818cf8" if dark else "#4338ca"};
+            border: 1px solid {"rgba(99, 102, 241, 0.35)" if dark else "#c7d2fe"};
+            border-radius: 6px;
+            padding: 2px 7px;
+            font-size: 10px;
             font-weight: 700;
+            letter-spacing: 0.8px;
+            font-family: "Segoe UI", sans-serif;
+        }}
+        QLabel#brandSubtitle {{
+            color: {text_muted};
+            font-size: 11px;
+            font-weight: 400;
+            font-family: "Segoe UI", sans-serif;
+        }}
+        QLabel#appTitle {{
+            font-size: 18px;
+            font-weight: 800;
             letter-spacing: -0.025em;
             color: {text_main};
         }}
