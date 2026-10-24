@@ -5,5 +5,5 @@
   "timeout": 2.0,
   "history_points": 60,
   "max_concurrent": 300,
-  "dark_theme": false
+  "dark_theme": true
 }

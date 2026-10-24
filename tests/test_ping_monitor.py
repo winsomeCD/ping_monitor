@@ -26,6 +26,7 @@ class PingMonitorAppTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.application = QApplication.instance() or QApplication([])
+        ping_monitor._ensure_system_fonts()
 
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
