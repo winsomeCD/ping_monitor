@@ -489,9 +489,9 @@ class ProbeTask(QRunnable):
             except Exception as error:
                 result = ProbeResult("Probe Error", error=str(error), packet_sent=False)
 
+            await self._emit_result(target, result)
             if self._async_stop_event.is_set():
                 return
-            await self._emit_result(target, result)
 
             if result.status == "DNS Error":
                 return

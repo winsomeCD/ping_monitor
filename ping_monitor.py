@@ -2424,7 +2424,8 @@ class PingMonitorApp(QMainWindow):
             latency_text = "—"
             error_text = f" — {result.error}" if result.error else ""
             timeline = f"[{timestamp}] Seq {sequence}: FAILED — {status}{error_text}"
-            log_result = (sequence, timestamp, status, result.error or "")
+            detail_msg = result.error or ("No ICMP reply before timeout" if self._is_down_status(status) else "")
+            log_result = (sequence, timestamp, status, detail_msg)
 
         data["timeline_stats"].append(timeline)
         data["log_rows"].append(log_result)
@@ -2457,7 +2458,7 @@ class PingMonitorApp(QMainWindow):
 
     @Slot(int, str, object)
     def _handle_probe_result(self, run_id, target, result):
-        if run_id != self._run_id or not self.is_monitoring:
+        if run_id != self._run_id or (not self.is_monitoring and not getattr(self, "_stop_pending", False)):
             return
         # If batching is active, ignore redundant individual completed signal
         if hasattr(self, "probe_task") and self.probe_task is not None and hasattr(self.probe_task.signals, "batch_completed"):
@@ -2467,7 +2468,7 @@ class PingMonitorApp(QMainWindow):
 
     @Slot(int, list)
     def _handle_probe_batch(self, run_id, batch):
-        if run_id != self._run_id or not self.is_monitoring:
+        if run_id != self._run_id or (not self.is_monitoring and not getattr(self, "_stop_pending", False)):
             return
         if not batch:
             return
@@ -3017,10 +3018,26 @@ class PingMonitorApp(QMainWindow):
                 down_now = [
                     h for h, d in data_snapshot.items() if self._is_down_status(d.get("last_status"))
                 ]
-                if down_now:
+                recovered_with_loss = [
+                    h for h, d in data_snapshot.items()
+                    if not self._is_down_status(d.get("last_status"))
+                    and (
+                        (d.get("last_down_time") and d.get("last_down_time") != "-")
+                        or any(self._is_down_status(r[2]) for r in d.get("log_rows", []))
+                    )
+                ]
+                if down_now or recovered_with_loss:
                     for h in down_now:
                         f.write(
                             f"• {h} (last failed: {data_snapshot[h].get('last_down_time', '-')})\n"
+                        )
+                    for h in recovered_with_loss:
+                        d = data_snapshot[h]
+                        sent = d.get("sent", 0)
+                        recv = d.get("received", 0)
+                        loss = round((sent - recv) / sent * 100, 1) if sent else 0.0
+                        f.write(
+                            f"• {h} [Recovered] (last failed: {d.get('last_down_time', '-')}, packet loss: {loss}%)\n"
                         )
                 else:
                     f.write("No target recorded an ICMP timeout. Web-service health is not tested.\n")
@@ -3030,8 +3047,17 @@ class PingMonitorApp(QMainWindow):
                 for host, data in data_snapshot.items():
                     f.write(f"\n# Stream: {host}\n")
                     f.write("-" * 50 + "\n")
-                    for log_entry in data["timeline_stats"]:
-                        f.write(log_entry + "\n")
+                    if data.get("timeline_stats"):
+                        for log_entry in data["timeline_stats"]:
+                            f.write(log_entry + "\n")
+                    elif data.get("log_rows"):
+                        for seq, ts, st, det in data["log_rows"]:
+                            if st == "Success":
+                                lat = f"{float(det):.2f} ms" if isinstance(det, (int, float)) else f"{det} ms"
+                                f.write(f"[{ts}] Seq {seq}: Success — Latency {lat}\n")
+                            else:
+                                err = f" — {det}" if det else ""
+                                f.write(f"[{ts}] Seq {seq}: FAILED — {st}{err}\n")
 
             self._msg("Success", f"Report successfully exported to:\n{file_path}")
         except Exception as e:
@@ -3115,11 +3141,14 @@ class PingMonitorApp(QMainWindow):
             probe_sheet.append(["Host", "Sequence", "Timestamp", "Status", "Latency ms", "Details"])
             for host, data in data_snapshot.items():
                 for sequence, timestamp, status, details in data.get("log_rows", []):
+                    probe_details = "" if status == "Success" else (
+                        details or ("No ICMP reply before timeout" if self._is_down_status(status) else "")
+                    )
                     probe_sheet.append([
                         host, sequence, timestamp,
                         "Connected" if status == "Success" else status,
                         details if status == "Success" else None,
-                        "" if status == "Success" else details,
+                        probe_details,
                     ])
             self._style_workbook_table(probe_sheet)
             for column, width in {"A": 30, "B": 12, "C": 22, "D": 24, "E": 16, "F": 50}.items():
@@ -3176,14 +3205,29 @@ class PingMonitorApp(QMainWindow):
                         "Last_Down_At": data.get("last_down_time", "-"),
                         "Timestamp": generated,
                     })
-                    if self._is_down_status(data.get("last_status")):
+                    had_no_reply = (
+                        self._is_down_status(data.get("last_status"))
+                        or (data.get("last_down_time") and data.get("last_down_time") != "-")
+                        or any(self._is_down_status(r[2]) for r in data.get("log_rows", []))
+                    )
+                    if had_no_reply:
+                        is_currently_down = self._is_down_status(data.get("last_status"))
+                        status_val = (
+                            data.get("last_status")
+                            if is_currently_down
+                            else "No ICMP Reply (Recovered)"
+                        )
+                        details_val = (
+                            data.get("last_error")
+                            or ("Host currently down" if is_currently_down else "Host recovered after packet loss")
+                        )
                         write_sanitized_row({
                             "Section": "No ICMP Reply",
                             "Host": host,
-                            "Status": data.get("last_status"),
+                            "Status": status_val,
                             "Consecutive_Fails": data.get("consecutive_fails", 0),
                             "Last_Down_At": data.get("last_down_time", "-"),
-                            "Details": data.get("last_error") or "",
+                            "Details": details_val,
                         })
                     if data.get("last_status") == "DNS Error":
                         write_sanitized_row({
@@ -3196,6 +3240,9 @@ class PingMonitorApp(QMainWindow):
                             "Details": data.get("last_error") or "Name resolution failed",
                         })
                     for sequence, timestamp, status, details in data.get("log_rows", []):
+                        probe_details = "" if status == "Success" else (
+                            details or ("No ICMP reply before timeout" if self._is_down_status(status) else "")
+                        )
                         write_sanitized_row({
                             "Section": "Probe",
                             "Host": host,
@@ -3203,7 +3250,7 @@ class PingMonitorApp(QMainWindow):
                             "Status": status,
                             "Latency_ms": details if status == "Success" else "",
                             "Timestamp": timestamp,
-                            "Details": "" if status == "Success" else details,
+                            "Details": probe_details,
                         })
             self._msg("Success", f"CSV successfully exported to:\n{file_path}")
         except Exception as e:
