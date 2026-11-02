@@ -256,14 +256,14 @@ class HostDetailDialog(QDialog):
 
     def _apply_style(self):
         dark = self._dark
-        bg = "#08090a" if dark else "#f8f9fa"
-        surface = "#0f1012" if dark else "#ffffff"
-        cell_bg = "#151719" if dark else "#f1f3f5"
+        bg = "#15171e" if dark else "#f8f9fa"
+        surface = "#1c1f28" if dark else "#ffffff"
+        cell_bg = "#242834" if dark else "#f1f3f5"
         text = "#f7f8f8" if dark else "#191a1b"
         muted = "#8a8f98" if dark else "#687076"
         border = "rgba(255, 255, 255, 0.08)" if dark else "rgba(0, 0, 0, 0.08)"
         border_highlight = "rgba(255, 255, 255, 0.18)" if dark else "rgba(0, 0, 0, 0.16)"
-        btn_bg = "#151719" if dark else "#f1f3f5"
+        btn_bg = "#242834" if dark else "#f1f3f5"
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {bg};
@@ -632,14 +632,14 @@ class DNSIssuesDialog(QDialog):
 
     def _apply_style(self):
         dark = self._dark
-        bg = "#08090a" if dark else "#f8f9fa"
-        surface = "#0f1012" if dark else "#ffffff"
-        elevated = "#151719" if dark else "#f1f3f5"
+        bg = "#15171e" if dark else "#f8f9fa"
+        surface = "#1c1f28" if dark else "#ffffff"
+        elevated = "#242834" if dark else "#f1f3f5"
         text = "#f7f8f8" if dark else "#191a1b"
         muted = "#8a8f98" if dark else "#687076"
         border = "rgba(255, 255, 255, 0.08)" if dark else "rgba(0, 0, 0, 0.08)"
         border_highlight = "rgba(255, 255, 255, 0.18)" if dark else "rgba(0, 0, 0, 0.16)"
-        header_bg = "#121316" if dark else "#f4f5f6"
+        header_bg = "#212530" if dark else "#f4f5f6"
         grid = "rgba(255, 255, 255, 0.04)" if dark else "rgba(0, 0, 0, 0.04)"
         primary = "#5e6ad2" if dark else "#4f56c0"
         primary_hover = "#717ce0" if dark else "#434aa8"
@@ -817,13 +817,13 @@ class LatencyChart(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         dark = self._dark
-        bg = QColor("#090a0c" if dark else "#ffffff")
+        bg = QColor("#181a23" if dark else "#ffffff")
         title_color = QColor("#8a8f98" if dark else "#687076")
         muted = QColor("#62666d" if dark else "#889096")
         grid_color = QColor(255, 255, 255, 12) if dark else QColor(0, 0, 0, 14)
         plot_border = QColor(255, 255, 255, 20) if dark else QColor(0, 0, 0, 20)
         legend_color = QColor("#f7f8f8" if dark else "#191a1b")
-        legend_bg = QColor("#121316" if dark else "#f4f5f6")
+        legend_bg = QColor("#212530" if dark else "#f4f5f6")
         colors = self.COLORS_DARK if dark else self.COLORS_LIGHT
 
         painter.fillRect(self.rect(), bg)
@@ -1056,7 +1056,7 @@ class BrandIconWidget(QWidget):
         # 1. Background Squircle with signature Obsidian gradient
         grad = QLinearGradient(0, 0, w, h)
         if dark:
-            grad.setColorAt(0.0, QColor("#171821"))
+            grad.setColorAt(0.0, QColor("#242834"))
             grad.setColorAt(1.0, QColor("#090a0e"))
         else:
             grad.setColorAt(0.0, QColor("#f6f7fa"))
@@ -1571,19 +1571,19 @@ class PingMonitorApp(QMainWindow):
         dark = self._is_dark
         if hasattr(self, "brand_icon"):
             self.brand_icon.set_dark(dark)
-        bg_main = "#08090a" if dark else "#f8f9fa"
-        bg_card = "#0f1012" if dark else "#ffffff"
-        bg_elevated = "#151719" if dark else "#f1f3f5"
-        bg_input = "#121315" if dark else "#ffffff"
+        bg_main = "#15171e" if dark else "#f8f9fa"
+        bg_card = "#1c1f28" if dark else "#ffffff"
+        bg_elevated = "#242834" if dark else "#f1f3f5"
+        bg_input = "#191c25" if dark else "#ffffff"
         border_subtle = "rgba(255, 255, 255, 0.08)" if dark else "rgba(0, 0, 0, 0.08)"
         border_highlight = "rgba(255, 255, 255, 0.18)" if dark else "rgba(0, 0, 0, 0.16)"
         border_focus = "#5e6ad2" if dark else "#4f56c0"
         text_main = "#f7f8f8" if dark else "#191a1b"
         text_muted = "#8a8f98" if dark else "#687076"
         text_caption = "#62666d" if dark else "#889096"
-        bg_table = "#0c0d0f" if dark else "#ffffff"
+        bg_table = "#181a23" if dark else "#ffffff"
         grid_color = "rgba(255, 255, 255, 0.04)" if dark else "rgba(0, 0, 0, 0.04)"
-        header_bg = "#121316" if dark else "#f4f5f6"
+        header_bg = "#212530" if dark else "#f4f5f6"
         header_text = "#8a8f98" if dark else "#687076"
         scroll_bg = "transparent"
         scroll_handle = "#23252a" if dark else "#cbd5e1"
