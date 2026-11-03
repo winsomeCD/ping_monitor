@@ -764,32 +764,48 @@ class DNSIssuesDialog(QDialog):
 class LatencyChart(QWidget):
     MAX_HOSTS = 20
     COLORS_DARK = [
-        "#5e6ad2",  # Linear Lavender
-        "#57c1ff",  # Raycast Cyan
-        "#59d499",  # Raycast Emerald
-        "#ffc533",  # Raycast Amber
-        "#ff6161",  # Raycast Crimson
-        "#c084fc",  # Lilac Violet
-        "#2dd4bf",  # Teal Accent
-        "#fb923c",  # Vivid Tangerine
-        "#38bdf8",  # Electric Sky
-        "#4ade80",  # Spring Green
-        "#f472b6",  # Pink
-        "#a1a1aa",  # Muted Slate
+        "#5e6ad2",  # 1. Linear Lavender
+        "#57c1ff",  # 2. Raycast Cyan
+        "#30a46c",  # 3. Emerald
+        "#ffc533",  # 4. Raycast Amber
+        "#ff6161",  # 5. Raycast Crimson
+        "#c084fc",  # 6. Lilac Violet
+        "#2dd4bf",  # 7. Teal Accent
+        "#fb923c",  # 8. Vivid Tangerine
+        "#38bdf8",  # 9. Electric Sky
+        "#4ade80",  # 10. Spring Green
+        "#f472b6",  # 11. Pink
+        "#a1a1aa",  # 12. Muted Slate
+        "#00e5ff",  # 13. Cyber Cyan
+        "#fbbf24",  # 14. Warm Amber
+        "#f43f5e",  # 15. Precision Rose
+        "#e879f9",  # 16. Neon Fuchsia
+        "#818cf8",  # 17. Electric Indigo
+        "#34d399",  # 18. Fresh Mint
+        "#67e8f9",  # 19. Ice Cyan
+        "#a3e635",  # 20. Electric Lime
     ]
     COLORS_LIGHT = [
-        "#4f56c0",  # Deep Lavender
-        "#0284c7",  # Deep Sky
-        "#059669",  # Emerald
-        "#d97706",  # Warm Amber
-        "#e11d48",  # Precision Rose
-        "#7c3aed",  # Violet
-        "#0d9488",  # Teal
-        "#ea580c",  # Vivid Tangerine
-        "#2563eb",  # Royal Blue
-        "#16a34a",  # Forest Green
-        "#db2777",  # Pink
-        "#52525b",  # Steel Slate
+        "#4f56c0",  # 1. Deep Lavender
+        "#0284c7",  # 2. Deep Sky
+        "#059669",  # 3. Emerald
+        "#d97706",  # 4. Warm Amber
+        "#e11d48",  # 5. Precision Rose
+        "#7c3aed",  # 6. Violet
+        "#0d9488",  # 7. Teal
+        "#ea580c",  # 8. Vivid Tangerine
+        "#2563eb",  # 9. Royal Blue
+        "#16a34a",  # 10. Forest Green
+        "#db2777",  # 11. Pink
+        "#52525b",  # 12. Steel Slate
+        "#0891b2",  # 13. Deep Cyan
+        "#b45309",  # 14. Ochre Amber
+        "#be123c",  # 15. Deep Crimson
+        "#c026d3",  # 16. Fuchsia
+        "#4338ca",  # 17. Indigo
+        "#047857",  # 18. Forest Mint
+        "#0369a1",  # 19. Ocean Blue
+        "#4d7c0f",  # 20. Deep Olive
     ]
 
     def __init__(self, parent=None):
@@ -925,11 +941,16 @@ class LatencyChart(QWidget):
             for i in range(1, len(points)):
                 painter.drawLine(points[i - 1], points[i])
 
-            # Endpoint live pulse dot
+            # Endpoint live pulse dot with glowing halo
             if points:
                 painter.setBrush(QBrush(base_color))
                 painter.setPen(Qt.NoPen)
-                painter.drawEllipse(points[-1], 2.8, 2.8)
+                painter.drawEllipse(points[-1], 2.5, 2.5)
+                halo_pen = QPen(base_color)
+                halo_pen.setWidthF(1.0)
+                painter.setPen(halo_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(points[-1], 4.5, 4.5)
 
         painter.restore()
 
@@ -1458,6 +1479,11 @@ class PingMonitorApp(QMainWindow):
         dash_title.setTextFormat(Qt.PlainText)
         top.addWidget(dash_title)
 
+        dash_hint = QLabel("• Double-click row to inspect")
+        dash_hint.setObjectName("tableHint")
+        dash_hint.setTextFormat(Qt.PlainText)
+        top.addWidget(dash_hint)
+
         # Integrated Filter Input
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Filter targets...")
@@ -1498,11 +1524,14 @@ class PingMonitorApp(QMainWindow):
         self.table.setAlternatingRowColors(False)
         self.table.setSortingEnabled(False)
         self.table.setShowGrid(True)
+        self.table.setToolTip("Double-click any host to open detailed telemetry inspection")
+        self.table.viewport().setCursor(Qt.PointingHandCursor)
         self.table.doubleClicked.connect(self.on_table_double_click)
         h = self.table.horizontalHeader()
         h.setFixedHeight(34)
         h.setSectionsClickable(True)
-        h.setSortIndicatorShown(False)
+        h.setSortIndicatorShown(True)
+        h.setSortIndicator(0, Qt.AscendingOrder)
         h.sectionClicked.connect(self.on_table_header_clicked)
         h.setSectionResizeMode(QHeaderView.Stretch)
         h.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -1542,8 +1571,12 @@ class PingMonitorApp(QMainWindow):
         self.down_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.down_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.down_table.setSortingEnabled(True)
+        self.down_table.setToolTip("Double-click any host to open detailed telemetry inspection")
+        self.down_table.viewport().setCursor(Qt.PointingHandCursor)
         dh = self.down_table.horizontalHeader()
         dh.setFixedHeight(34)
+        dh.setSortIndicatorShown(True)
+        dh.setSortIndicator(0, Qt.AscendingOrder)
         dh.setSectionResizeMode(QHeaderView.Interactive)
         dh.setStretchLastSection(True)
         self.down_table.setShowGrid(True)
@@ -1731,6 +1764,11 @@ class PingMonitorApp(QMainWindow):
             font-size: 11px;
             font-family: "Consolas", monospace;
         }}
+        QLabel#tableHint {{
+            color: {text_caption};
+            font-size: 11px;
+            font-style: italic;
+        }}
         QLabel#healthyLabel {{
             color: {"#30a46c" if dark else "#18794e"};
             font-weight: 600;
@@ -1830,6 +1868,9 @@ class PingMonitorApp(QMainWindow):
             border-radius: 8px;
             outline: none;
         }}
+        QTableWidget:focus {{
+            border: 1px solid {border_focus};
+        }}
         QTableWidget::item {{
             color: {text_main};
             background-color: {bg_table};
@@ -1847,7 +1888,7 @@ class PingMonitorApp(QMainWindow):
             border: none;
             border-bottom: 1px solid {border_subtle};
             border-right: 1px solid {grid_color};
-            padding: 7px 10px;
+            padding: 7px 16px 7px 10px;
             font-size: 10px;
             font-weight: 700;
             letter-spacing: 0.06em;
