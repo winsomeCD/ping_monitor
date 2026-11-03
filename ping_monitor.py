@@ -23,7 +23,14 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QLineEdit, QDialog, QTextEdit,
     QPushButton, QSpinBox, QDoubleSpinBox, QFrame, QMessageBox,
 )
-from probes import MAX_CONCURRENT_PROBES, ProbeResult, ProbeTask, normalize_targets
+from probes import (
+    MAX_CONCURRENT_PROBES,
+    ProbeResult,
+    ProbeTask,
+    calculate_rfc3550_jitter,
+    calculate_percentile,
+    normalize_targets,
+)
 
 
 _NUMERIC_RE = re.compile(r"[^0-9.+-]")
@@ -185,18 +192,19 @@ class HostDetailDialog(QDialog):
             ("Recent Samples", len(valid_latencies)),
         ]
         if valid_latencies:
+            rfc_jitter = calculate_rfc3550_jitter(valid_latencies)
             stats.extend([
                 ("Min Latency", f"{min(valid_latencies):.2f} ms"),
                 ("Max Latency", f"{max(valid_latencies):.2f} ms"),
                 ("Avg Latency", f"{sum(valid_latencies) / len(valid_latencies):.2f} ms"),
-                ("Jitter Spread", f"{max(valid_latencies) - min(valid_latencies):.2f} ms"),
+                ("RFC Jitter", f"{rfc_jitter:.2f} ms"),
             ])
         else:
             stats.extend([
                 ("Min Latency", "—"),
                 ("Max Latency", "—"),
                 ("Avg Latency", "—"),
-                ("Jitter Spread", "—"),
+                ("RFC Jitter", "—"),
             ])
 
         for i, (label, value) in enumerate(stats):
@@ -2273,7 +2281,9 @@ class PingMonitorApp(QMainWindow):
             self._msg("No Hosts", "Please enter at least one target host.", QMessageBox.Warning)
             return
 
-        self.host_entry.setText(", ".join(self.hosts))
+        raw_hosts_input = self.host_entry.text()
+        if "/" not in raw_hosts_input:
+            self.host_entry.setText(", ".join(self.hosts))
         if duplicate_count:
             self._msg(
                 "Duplicate Targets Removed",

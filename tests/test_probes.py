@@ -1,8 +1,11 @@
 import asyncio
+import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from icmplib import NameLookupError, SocketPermissionError
 
@@ -12,6 +15,8 @@ from probes import (
     DNSResolver,
     ProbeResult,
     ProbeTask,
+    calculate_rfc3550_jitter,
+    calculate_percentile,
     normalize_targets,
     probe_target,
 )
@@ -45,6 +50,71 @@ class TargetValidationTests(unittest.TestCase):
 
         self.assertEqual(len(targets), 1024)
         self.assertEqual(duplicate_count, 0)
+
+    def test_cidr_expansion_24(self):
+        targets, dupes = normalize_targets("10.128.7.0/24")
+        self.assertEqual(len(targets), 254)
+        self.assertEqual(targets[0], "10.128.7.1")
+        self.assertEqual(targets[-1], "10.128.7.254")
+        self.assertNotIn("10.128.7.0", targets)
+        self.assertNotIn("10.128.7.255", targets)
+        self.assertEqual(dupes, 0)
+
+    def test_cidr_expansion_with_host_bits(self):
+        targets, dupes = normalize_targets("10.128.7.50/24")
+        self.assertEqual(len(targets), 254)
+        self.assertEqual(targets[0], "10.128.7.1")
+        self.assertEqual(targets[-1], "10.128.7.254")
+
+    def test_cidr_safety_threshold_22_allowed(self):
+        targets, dupes = normalize_targets("10.0.0.0/22")
+        self.assertEqual(len(targets), 1022)
+        self.assertEqual(dupes, 0)
+
+    def test_cidr_safety_threshold_22_exceeded(self):
+        for prefix in (21, 16, 15, 8):
+            with self.assertRaises(ValueError) as ctx:
+                normalize_targets(f"10.0.0.0/{prefix}")
+            self.assertIn("/22", str(ctx.exception))
+
+    def test_cidr_boundary_31_and_32(self):
+        targets_31, _ = normalize_targets("192.168.1.0/31")
+        self.assertEqual(targets_31, ["192.168.1.0", "192.168.1.1"])
+
+        targets_32, _ = normalize_targets("192.168.1.5/32")
+        self.assertEqual(targets_32, ["192.168.1.5"])
+
+    def test_cidr_mixed_with_domains_and_ips_deduplication(self):
+        raw = "10.128.7.1, 10.128.7.0/24, 8.8.8.8, google.com"
+        targets, dupes = normalize_targets(raw)
+        self.assertEqual(dupes, 1)
+        self.assertEqual(len(targets), 256)
+        self.assertIn("10.128.7.1", targets)
+        self.assertIn("8.8.8.8", targets)
+        self.assertIn("google.com", targets)
+
+    def test_cidr_ipv6_expansion_and_limit(self):
+        targets, dupes = normalize_targets("2001:db8::/126")
+        self.assertEqual(len(targets), 4)
+        self.assertEqual(dupes, 0)
+
+        with self.assertRaises(ValueError) as ctx:
+            normalize_targets("2001:db8::/64")
+        self.assertIn("IPv6", str(ctx.exception))
+
+    def test_rfc3550_jitter_calculation(self):
+        self.assertEqual(calculate_rfc3550_jitter([]), 0.0)
+        self.assertEqual(calculate_rfc3550_jitter([10.0]), 0.0)
+        self.assertEqual(calculate_rfc3550_jitter([15.0, 15.0, 15.0]), 0.0)
+        samples = [10.0, 26.0]
+        self.assertAlmostEqual(calculate_rfc3550_jitter(samples), 1.0, places=2)
+
+    def test_percentile_calculation(self):
+        self.assertEqual(calculate_percentile([], 95), 0.0)
+        samples = list(range(1, 101))
+        p95 = calculate_percentile(samples, 95)
+        self.assertTrue(94.0 <= p95 <= 96.0)
+        self.assertEqual(calculate_percentile([10.0], 95), 10.0)
 
 
 class DNSResolverTests(unittest.TestCase):

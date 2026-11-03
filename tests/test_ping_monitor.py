@@ -734,6 +734,28 @@ class PingMonitorAppTests(unittest.TestCase):
         self.assertEqual(ping_monitor._sanitize_csv_cell("+10"), "+10")
         self.assertEqual(ping_monitor._sanitize_csv_cell("8.8.8.8"), "8.8.8.8")
 
+    def test_cidr_ui_workflow(self):
+        self.window.host_entry.setText("10.128.7.0/24")
+        with patch.object(self.window.probe_pool, "start"):
+            self.window.toggle_monitoring()
+        self.application.processEvents()
+        self.window.refresh_dashboard()
+
+        # 254 hosts generated
+        self.assertEqual(len(self.window.hosts), 254)
+        self.assertEqual(self.window.hosts[0], "10.128.7.1")
+        self.assertEqual(self.window.hosts[-1], "10.128.7.254")
+
+        # user input remains clean CIDR
+        self.assertEqual(self.window.host_entry.text(), "10.128.7.0/24")
+
+        # card_fleet shows 254 targets
+        self.assertEqual(self.window.card_fleet.lbl_val.text(), "254 Targets")
+
+        self.window.stop_monitoring()
+        self.application.processEvents()
+        self.assertEqual(self.window.host_entry.text(), "10.128.7.0/24")
+
 
 if __name__ == "__main__":
     unittest.main()

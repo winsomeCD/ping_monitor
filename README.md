@@ -63,6 +63,8 @@ The monitor runs cross-platform on **Windows**, **Linux**, and **macOS**, automa
 
 ## Features
 
+- **CIDR Subnet Auto-Expansion** — directly enter subnets such as `10.128.7.0/24` or `192.168.1.0/28`; the input parser automatically expands usable host addresses (filtering network/broadcast addresses) while preserving your clean CIDR string in the UI input and saved config, protected by a safety prefix threshold (`/22` - max 1022 hosts).
+- **RFC 3550 Interarrival Jitter** — calculates telecommunication-grade continuous network jitter in target inspection.
 - **High-concurrency monitoring** — easily monitors 300 to 1,000+ parallel targets with multiplexed asynchronous raw sockets (`AsyncICMPSession`) and zero socket-buffer duplication.
 - **Smart DNS caching & pacing** — resolves hostnames once, caches for 5 minutes (`DNS_CACHE_TTL = 300s`), and paces initial queries via semaphore to prevent DNS server/threadpool flooding.
 - **DNS Issue Isolation & Multi-Check Verification** — hostnames with name resolution errors are vetted with multiple DNS lookups, isolated from the live telemetry stream and chart, and tracked in a dedicated DNS Inspector with live filtering, clipboard copy, and export.

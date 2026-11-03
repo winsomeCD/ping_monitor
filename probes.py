@@ -3,7 +3,9 @@
 import asyncio
 import ipaddress
 import json
+import math
 import random
+import re
 import shutil
 import socket
 import struct
@@ -326,9 +328,42 @@ class AsyncICMPSession:
             self._v6_sock = None
 
 
+def calculate_rfc3550_jitter(latencies: Sequence[float]) -> float:
+    """Calculate interarrival jitter according to RFC 3550 / RFC 1889.
+
+    Formula: J_i = J_{i-1} + (|D(i-1, i)| - J_{i-1}) / 16
+    """
+    valid = [float(val) for val in latencies if val is not None and val >= 0]
+    if len(valid) < 2:
+        return 0.0
+    jitter = 0.0
+    for i in range(1, len(valid)):
+        diff = abs(valid[i] - valid[i - 1])
+        jitter += (diff - jitter) / 16.0
+    return round(jitter, 2)
+
+
+def calculate_percentile(values: Sequence[float], percentile: float = 95.0) -> float:
+    """Calculate the p-th percentile of a numerical sample."""
+    valid = sorted([float(v) for v in values if v is not None and v >= 0])
+    if not valid:
+        return 0.0
+    if len(valid) == 1:
+        return round(valid[0], 2)
+    k = (len(valid) - 1) * (percentile / 100.0)
+    floor_idx = int(math.floor(k))
+    ceil_idx = int(math.ceil(k))
+    if floor_idx == ceil_idx:
+        return round(valid[floor_idx], 2)
+    d0 = valid[floor_idx] * (ceil_idx - k)
+    d1 = valid[ceil_idx] * (k - floor_idx)
+    return round(d0 + d1, 2)
+
+
 def normalize_targets(raw_targets: str) -> tuple[list[str], int]:
-    """Return unique targets and the number of duplicate entries removed."""
-    targets = [target.strip() for target in raw_targets.split(",") if target.strip()]
+    """Return unique targets and the number of duplicate entries removed, with CIDR subnet expansion."""
+    raw_tokens = re.split(r"[\r\n\t,]+", raw_targets) if ("\n" in raw_targets or "\t" in raw_targets) else raw_targets.split(",")
+    targets = [target.strip() for target in raw_tokens if target.strip()]
     unique_targets = []
     seen = set()
     duplicate_count = 0
@@ -336,12 +371,48 @@ def normalize_targets(raw_targets: str) -> tuple[list[str], int]:
     for target in targets:
         if any(character.isspace() for character in target):
             raise ValueError(f"Target contains whitespace: {target!r}")
-        normalized = target.casefold()
-        if normalized in seen:
-            duplicate_count += 1
-            continue
-        seen.add(normalized)
-        unique_targets.append(target)
+        if any(ord(character) < 32 or ord(character) == 127 for character in target):
+            raise ValueError(f"Target contains invalid control characters: {target!r}")
+        if len(target) > 255:
+            raise ValueError(f"Target exceeds maximum allowed length of 255 characters: {target[:30]}...")
+
+        if "/" in target:
+            try:
+                net = ipaddress.ip_network(target, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid CIDR subnet notation or target format: {target!r}")
+
+            if net.version == 4:
+                if net.prefixlen < 22:
+                    raise ValueError(
+                        f"CIDR prefix /{net.prefixlen} for '{target}' exceeds safe GUI limit (/22 - max 1022 hosts). "
+                        "Subnets broader than /22 are not permitted for live ICMP monitoring."
+                    )
+                if net.num_addresses > 2:
+                    expanded = [str(ip) for ip in net.hosts()]
+                else:
+                    expanded = [str(ip) for ip in net]
+            else:
+                if net.prefixlen < 120:
+                    raise ValueError(
+                        f"IPv6 CIDR prefix /{net.prefixlen} for '{target}' exceeds safe limit (/120)."
+                    )
+                expanded = [str(ip) for ip in net]
+
+            for ip_str in expanded:
+                normalized = ip_str.casefold()
+                if normalized in seen:
+                    duplicate_count += 1
+                    continue
+                seen.add(normalized)
+                unique_targets.append(ip_str)
+        else:
+            normalized = target.casefold()
+            if normalized in seen:
+                duplicate_count += 1
+                continue
+            seen.add(normalized)
+            unique_targets.append(target)
 
     return unique_targets, duplicate_count
 
